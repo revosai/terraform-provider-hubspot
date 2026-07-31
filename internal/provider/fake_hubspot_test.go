@@ -16,8 +16,10 @@ package provider_test
 //     list index, property displayOrder defaults to -1.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -204,6 +206,20 @@ type fakeListInput struct {
 	FilterBranch   json.RawMessage `json:"filterBranch"`
 }
 
+// fakeFlow is an Automation v4 workflow as stored by the fake. The typed
+// fields are the ones HubSpot manages at the top level; Extra holds the rest
+// of the flow graph (actions, enrollmentCriteria, …) normalized with
+// server-injected defaults, mirroring the live beta API.
+type fakeFlow struct {
+	ID           string
+	RevisionID   int64
+	Name         string
+	Type         string // CONTACT_FLOW / PLATFORM_FLOW
+	ObjectTypeID string
+	IsEnabled    bool
+	Extra        map[string]any
+}
+
 type fakeHubSpot struct {
 	mu              sync.Mutex
 	groups          map[string]map[string]*fakeGroup    // objectType -> name -> group
@@ -212,6 +228,7 @@ type fakeHubSpot struct {
 	schemas         map[string]*fakeObjectSchema        // objectTypeId -> schema
 	labels          map[string][]*fakeAssocLabel        // "from/to" -> labels
 	lists           map[string]*fakeList                // listId -> list
+	flows           map[string]*fakeFlow                // flowId -> flow
 	owners          []*fakeOwner
 	portalID        int64
 	pipelineCounter int
@@ -219,7 +236,9 @@ type fakeHubSpot struct {
 	schemaCounter   int
 	labelCounter    int64
 	listCounter     int
+	flowCounter     int
 	lastPipelinePut string // raw query string of the most recent pipeline PUT
+	lastFlowPut     []byte // raw body of the most recent flow PUT
 
 	// schemaReadLag emulates HubSpot's stale schema-read cache: after every
 	// schema write, GETs alternate between a pre-write snapshot and the
@@ -249,6 +268,7 @@ func newFakeHubSpot(t *testing.T) (*fakeHubSpot, *httptest.Server) {
 		schemas:     map[string]*fakeObjectSchema{},
 		labels:      map[string][]*fakeAssocLabel{},
 		lists:       map[string]*fakeList{},
+		flows:       map[string]*fakeFlow{},
 		schemaStale: map[string]*fakeSchemaStale{},
 		portalID:    123456,
 	}
@@ -351,6 +371,11 @@ func (f *fakeHubSpot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// crm/v3/lists[/...] — resource hubspot_list.
 	if len(parts) >= 3 && parts[0] == "crm" && parts[1] == "v3" && parts[2] == "lists" {
 		f.listsRoute(w, r, parts[3:])
+		return
+	}
+	// automation/v4/flows[/{flowId}] — resource hubspot_workflow.
+	if len(parts) >= 3 && parts[0] == "automation" && parts[1] == "v4" && parts[2] == "flows" {
+		f.flowsRoute(w, r, parts[3:])
 		return
 	}
 
@@ -1268,6 +1293,290 @@ func listResponse(l *fakeList, includeFilters bool) map[string]any {
 		out["filterBranch"] = l.FilterBranch
 	}
 	return out
+}
+
+// seedFlow installs a pre-existing workflow (with an empty action graph) so
+// data-source tests can look it up without a Terraform-managed fixture.
+func (f *fakeHubSpot) seedFlow(name, flowType, objectTypeID string, enabled bool) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.flowCounter++
+	fl := &fakeFlow{
+		ID:           fmt.Sprintf("%d", f.flowCounter),
+		RevisionID:   1,
+		Name:         name,
+		Type:         flowType,
+		ObjectTypeID: objectTypeID,
+		IsEnabled:    enabled,
+		Extra:        map[string]any{"actions": []any{}},
+	}
+	normalizeFlowExtra(fl.Extra)
+	f.flows[fl.ID] = fl
+	return fl.ID
+}
+
+// deleteFlowOOB simulates out-of-band deletion (for _disappears tests).
+func (f *fakeHubSpot) deleteFlowOOB(flowID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.flows, flowID)
+}
+
+// bumpFlowRevisionOOB simulates a concurrent edit in the HubSpot UI: the
+// flow's revisionId advances without the provider seeing it, so a stale
+// PUT would 409. The provider's GET-then-PUT must absorb this.
+func (f *fakeHubSpot) bumpFlowRevisionOOB(flowID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fl := f.flows[flowID]; fl != nil {
+		fl.RevisionID++
+	}
+}
+
+// flowRevision returns the flow's current revisionId (0 if missing), so
+// tests can assert optimistic-lock bookkeeping.
+func (f *fakeHubSpot) flowRevision(flowID string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fl := f.flows[flowID]; fl != nil {
+		return fl.RevisionID
+	}
+	return 0
+}
+
+// lastFlowPutBody returns the raw body of the most recent flow PUT, so tests
+// can assert the transmitted revisionId.
+func (f *fakeHubSpot) lastFlowPutBody() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastFlowPut
+}
+
+// flowsRoute dispatches /automation/v4/flows[/{flowId}].
+func (f *fakeHubSpot) flowsRoute(w http.ResponseWriter, r *http.Request, rest []string) {
+	switch {
+	case len(rest) == 0 && r.Method == http.MethodPost:
+		f.createFlow(w, r)
+	case len(rest) == 0 && r.Method == http.MethodGet:
+		f.listFlows(w, r)
+	case len(rest) == 1:
+		f.flowByID(w, r, rest[0])
+	default:
+		writeHubSpotError(w, http.StatusNotFound, "OBJECT_NOT_FOUND", "unhandled route "+r.Method+" "+r.URL.Path)
+	}
+}
+
+// flowManagedKeys are the top-level flow fields the fake stores typed (and the
+// server-owned identity/audit fields); everything else lands in Extra.
+var flowManagedKeys = []string{
+	"id", "revisionId", "name", "type", "objectTypeId", "isEnabled",
+	"flowType", "createdAt", "updatedAt",
+}
+
+// decodeFlowBody splits a create/update body into the typed fields and the
+// normalized Extra remainder. It emulates the live API's validation and
+// server-side normalization (injected top-level defaults, filter expansion).
+func decodeFlowBody(r *http.Request) (name, flowType, objectTypeID string, isEnabled bool, revisionID string, extra map[string]any, errMsg string) {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return "", "", "", false, "", nil, "invalid JSON: " + err.Error()
+	}
+	name, _ = body["name"].(string)
+	flowType, _ = body["type"].(string)
+	objectTypeID, _ = body["objectTypeId"].(string)
+	isEnabled, _ = body["isEnabled"].(bool)
+	revisionID, _ = body["revisionId"].(string)
+	if name == "" {
+		return "", "", "", false, "", nil, "name is required"
+	}
+	switch flowType {
+	case "CONTACT_FLOW":
+		if objectTypeID == "" {
+			objectTypeID = "0-1"
+		}
+	case "PLATFORM_FLOW":
+		if objectTypeID == "" {
+			return "", "", "", false, "", nil, "objectTypeId is required for PLATFORM_FLOW"
+		}
+	default:
+		return "", "", "", false, "", nil, "type must be CONTACT_FLOW or PLATFORM_FLOW"
+	}
+	if _, ok := body["actions"]; !ok {
+		return "", "", "", false, "", nil, "actions is required"
+	}
+	extra = map[string]any{}
+	for k, v := range body {
+		if slices.Contains(flowManagedKeys, k) {
+			continue
+		}
+		extra[k] = v
+	}
+	normalizeFlowExtra(extra)
+	return name, flowType, objectTypeID, isEnabled, revisionID, extra, ""
+}
+
+// normalizeFlowExtra emulates the beta API's server-side expansion of a flow:
+// top-level defaults are injected when absent, every action gains an
+// actionTypeVersion, and any embedded filter trees (enrollment criteria) get
+// the same expansion the Lists API applies.
+func normalizeFlowExtra(extra map[string]any) {
+	if _, ok := extra["canEnrollFromSalesforce"]; !ok {
+		extra["canEnrollFromSalesforce"] = false
+	}
+	if _, ok := extra["timeWindows"]; !ok {
+		extra["timeWindows"] = []any{}
+	}
+	if _, ok := extra["blockedDates"]; !ok {
+		extra["blockedDates"] = []any{}
+	}
+	if _, ok := extra["customProperties"]; !ok {
+		extra["customProperties"] = []any{}
+	}
+	if _, ok := extra["crmObjectCreationStatus"]; !ok {
+		extra["crmObjectCreationStatus"] = "COMPLETE"
+	}
+	if actions, ok := extra["actions"].([]any); ok {
+		for _, a := range actions {
+			if am, ok := a.(map[string]any); ok {
+				if _, has := am["actionTypeVersion"]; !has {
+					am["actionTypeVersion"] = float64(0)
+				}
+			}
+		}
+	}
+	injectFilterDefaults(extra)
+}
+
+// flowResponse builds the JSON flow object as the live API returns it.
+func flowResponse(fl *fakeFlow) map[string]any {
+	out := map[string]any{
+		"id":           fl.ID,
+		"revisionId":   strconv.FormatInt(fl.RevisionID, 10),
+		"name":         fl.Name,
+		"type":         fl.Type,
+		"objectTypeId": fl.ObjectTypeID,
+		"isEnabled":    fl.IsEnabled,
+		"flowType":     "WORKFLOW",
+		"createdAt":    "2026-03-03T10:00:00.000Z",
+		"updatedAt":    "2026-03-03T10:00:00.000Z",
+	}
+	for k, v := range fl.Extra {
+		out[k] = v
+	}
+	return out
+}
+
+func (f *fakeHubSpot) createFlow(w http.ResponseWriter, r *http.Request) {
+	name, flowType, objectTypeID, isEnabled, _, extra, errMsg := decodeFlowBody(r)
+	if errMsg != "" {
+		writeHubSpotError(w, http.StatusBadRequest, "VALIDATION_ERROR", errMsg)
+		return
+	}
+	f.flowCounter++
+	fl := &fakeFlow{
+		ID:           fmt.Sprintf("%d", f.flowCounter),
+		RevisionID:   1,
+		Name:         name,
+		Type:         flowType,
+		ObjectTypeID: objectTypeID,
+		IsEnabled:    isEnabled,
+		Extra:        extra,
+	}
+	f.flows[fl.ID] = fl
+	writeJSON(w, http.StatusCreated, flowResponse(fl))
+}
+
+// listFlows emulates GET /automation/v4/flows with cursor pagination. The
+// page size is deliberately capped at 2 (below any real limit) so the
+// data source's pagination loop is exercised by small test fixtures.
+func (f *fakeHubSpot) listFlows(w http.ResponseWriter, r *http.Request) {
+	ids := make([]string, 0, len(f.flows))
+	for id := range f.flows {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, _ := strconv.Atoi(ids[i])
+		b, _ := strconv.Atoi(ids[j])
+		return a < b
+	})
+
+	start := 0
+	if after := r.URL.Query().Get("after"); after != "" {
+		n, err := strconv.Atoi(after)
+		if err != nil {
+			writeHubSpotError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid after cursor")
+			return
+		}
+		start = n
+	}
+	const pageSize = 2
+	end := start + pageSize
+	if end > len(ids) {
+		end = len(ids)
+	}
+	results := make([]map[string]any, 0, pageSize)
+	for _, id := range ids[start:end] {
+		results = append(results, flowResponse(f.flows[id]))
+	}
+	out := map[string]any{"results": results}
+	if end < len(ids) {
+		out["paging"] = map[string]any{"next": map[string]any{"after": strconv.Itoa(end)}}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (f *fakeHubSpot) flowByID(w http.ResponseWriter, r *http.Request, id string) {
+	fl := f.flows[id]
+	switch r.Method {
+	case http.MethodGet:
+		if fl == nil {
+			writeHubSpotError(w, http.StatusNotFound, "OBJECT_NOT_FOUND", "flow not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, flowResponse(fl))
+	case http.MethodPut:
+		if fl == nil {
+			writeHubSpotError(w, http.StatusNotFound, "OBJECT_NOT_FOUND", "flow not found")
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeHubSpotError(w, http.StatusBadRequest, "VALIDATION_ERROR", "unreadable body")
+			return
+		}
+		f.lastFlowPut = raw
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		name, flowType, objectTypeID, isEnabled, revisionID, extra, errMsg := decodeFlowBody(r)
+		if errMsg != "" {
+			writeHubSpotError(w, http.StatusBadRequest, "VALIDATION_ERROR", errMsg)
+			return
+		}
+		// Optimistic lock: the PUT must carry the current revisionId.
+		if revisionID != strconv.FormatInt(fl.RevisionID, 10) {
+			writeHubSpotError(w, http.StatusConflict, "CONFLICT",
+				fmt.Sprintf("Flow revision id %s is not the latest revision id %d", revisionID, fl.RevisionID))
+			return
+		}
+		if flowType != fl.Type {
+			writeHubSpotError(w, http.StatusBadRequest, "VALIDATION_ERROR", "type cannot be changed")
+			return
+		}
+		fl.Name = name
+		fl.ObjectTypeID = objectTypeID
+		fl.IsEnabled = isEnabled
+		fl.Extra = extra
+		fl.RevisionID++
+		writeJSON(w, http.StatusOK, flowResponse(fl))
+	case http.MethodDelete:
+		if fl == nil {
+			writeHubSpotError(w, http.StatusNotFound, "OBJECT_NOT_FOUND", "flow not found")
+			return
+		}
+		delete(f.flows, id)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeHubSpotError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", r.Method)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
