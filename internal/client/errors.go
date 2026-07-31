@@ -50,6 +50,13 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
+// IsConflict reports whether err is an *APIError with HTTP status 409, e.g.
+// an Automation v4 PUT rejected by the flow's revisionId optimistic lock.
+func IsConflict(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict
+}
+
 // AsAPIError is an errors.As convenience wrapper for *APIError. It reports
 // whether err (or any error it wraps) is an *APIError, storing it in *target.
 func AsAPIError(err error, target **APIError) bool {

@@ -1297,7 +1297,7 @@ func listResponse(l *fakeList, includeFilters bool) map[string]any {
 
 // seedFlow installs a pre-existing workflow (with an empty action graph) so
 // data-source tests can look it up without a Terraform-managed fixture.
-func (f *fakeHubSpot) seedFlow(name, flowType, objectTypeID string, enabled bool) string {
+func (f *fakeHubSpot) seedFlow(name, flowType, objectTypeID string, enabled bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.flowCounter++
@@ -1312,7 +1312,6 @@ func (f *fakeHubSpot) seedFlow(name, flowType, objectTypeID string, enabled bool
 	}
 	normalizeFlowExtra(fl.Extra)
 	f.flows[fl.ID] = fl
-	return fl.ID
 }
 
 // deleteFlowOOB simulates out-of-band deletion (for _disappears tests).

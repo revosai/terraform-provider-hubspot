@@ -114,7 +114,7 @@ func TestAccWorkflowDataSource_errors(t *testing.T) {
 			expectError: regexp.MustCompile(`[Aa]mbiguous`),
 		},
 		{
-			name:        "both flow_id and name",
+			name: "both flow_id and name",
 			config: `data "hubspot_workflow" "test" {
   flow_id = "1"
   name    = "Duplicated"

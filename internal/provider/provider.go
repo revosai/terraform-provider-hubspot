@@ -136,6 +136,7 @@ func (p *HubSpotProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewObjectSchemaResource,
 		NewAssociationLabelResource,
 		NewListResource,
+		NewWorkflowResource,
 	}
 }
 
@@ -148,6 +149,7 @@ func (p *HubSpotProvider) DataSources(_ context.Context) []func() datasource.Dat
 		NewAssociationLabelsDataSource,
 		NewPipelineDataSource,
 		NewObjectSchemaDataSource,
+		NewWorkflowDataSource,
 	}
 }
 

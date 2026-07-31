@@ -64,6 +64,25 @@ func TestClient_NotFoundIsTyped(t *testing.T) {
 	}
 }
 
+func TestClient_ConflictIsTyped(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = fmt.Fprint(w, `{"status":"error","message":"Flow revision id 1 is not the latest revision id 2","category":"CONFLICT","correlationId":"abc-123"}`)
+	}))
+
+	err := c.Put(context.Background(), "/automation/v4/flows/1", map[string]any{}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !client.IsConflict(err) {
+		t.Errorf("IsConflict = false, want true; err = %v", err)
+	}
+	if client.IsNotFound(err) {
+		t.Error("IsNotFound = true for a 409, want false")
+	}
+}
+
 func TestClient_DecodesHubSpotErrorBody(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
