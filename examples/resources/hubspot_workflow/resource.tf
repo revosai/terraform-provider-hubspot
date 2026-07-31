@@ -57,8 +57,8 @@ resource "hubspot_workflow" "welcome_new_leads" {
                 filterType = "PROPERTY"
                 property   = "email"
                 operation = {
-                  operationType      = "ALL_PROPERTY"
-                  operator           = "IS_KNOWN"
+                  operationType                = "ALL_PROPERTY"
+                  operator                     = "IS_KNOWN"
                   includeObjectsWithNoValueSet = false
                 }
               },

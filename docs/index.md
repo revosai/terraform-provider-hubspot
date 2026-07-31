@@ -1,14 +1,14 @@
 ---
 page_title: "Provider: HubSpot"
 description: |-
-  Manage HubSpot portal configuration as code: CRM properties, property groups, pipelines, custom object schemas, association labels, and lists.
+  Manage HubSpot portal configuration as code: CRM properties, property groups, pipelines, custom object schemas, association labels, lists, and workflows.
 ---
 
 # HubSpot Provider
 
 The HubSpot provider manages your HubSpot portal's **configuration plane** as
 code: CRM properties, property groups, pipelines, custom object schemas,
-association labels, and lists. It does not manage CRM records (contacts,
+association labels, lists, and workflows. It does not manage CRM records (contacts,
 companies, deals) — those belong to your day-to-day CRM workflows, not your
 infrastructure definition.
 

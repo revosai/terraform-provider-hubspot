@@ -73,10 +73,14 @@ Phase 2 additions (pipeline, object schema, association labels).
 
 ### Phase 4 — workflows (v0.6, beta API)
 
-`hubspot_workflow` — workflows as code via the Automation v4 **beta** API:
-raw JSON flow graph with optimistic locking, plus a `data.hubspot_workflow`
-lookup. The single loudest HubSpot admin pain (backup, rollback,
-sandbox→production promotion of automation).
+Workflows as code via the Automation v4 **beta** API — the single loudest
+HubSpot admin pain (backup, rollback, sandbox→production promotion of
+automation).
+
+| Resource | Backing API | Status |
+|---|---|---|
+| `hubspot_workflow` (raw JSON flow graph, `revisionId` optimistic locking) | Automation v4 (**beta**) | ✅ shipped |
+| `data.hubspot_workflow` (lookup by flow ID or exact name) | Automation v4 (**beta**) | ✅ shipped |
 
 ### Phase 5 — people + escape hatch (v0.7)
 

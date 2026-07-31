@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+FEATURES:
+
+* **New Resource:** `hubspot_workflow` — manage workflows via the Automation v4 **beta** API: raw `flow_json` graph compared semantically (absorbs server-injected defaults), `revisionId` optimistic locking handled GET-then-PUT (concurrent UI edits never strand an apply), `flow_type`/`object_type_id` RequiresReplace, `enabled` defaults to off, import by flow ID
+* **New Data Source:** `hubspot_workflow` — look up a workflow by flow ID or exact name (ambiguous names error); exposes the complete flow definition JSON for point-in-time backups
+
 ## 0.1.0 (July 24, 2026)
 
 BUG FIXES:

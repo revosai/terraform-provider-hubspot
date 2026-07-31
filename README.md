@@ -30,8 +30,9 @@ trail.
 | [`hubspot_object_schema`](./docs/resources/object_schema.md) | Custom object definitions (Enterprise tier): labels, display/required/searchable properties, bootstrap properties, associations | **Deletes** the object type and all its records — gated behind `force_delete = true`; two-phase archive-then-purge | `{object_type_id}` (e.g. `2-12345`) |
 | [`hubspot_association_label`](./docs/resources/association_label.md) | Custom association labels between two object types (Pro/Ent), paired or unpaired | **Deletes** the label — removing it from every record association that uses it | `{from_object_type}/{to_object_type}/{type_id}` |
 | [`hubspot_list`](./docs/resources/list.md) | CRM lists (`MANUAL`/`DYNAMIC`/`SNAPSHOT`) — the list *definition* only, never membership; `filter_branch` is compared semantically to absorb server-injected defaults | **Archives** the list (restorable within 90 days) | `{list_id}` |
+| [`hubspot_workflow`](./docs/resources/workflow.md) | Workflows via the Automation v4 **beta** API — raw JSON `flow_json` graph compared semantically, `revisionId` optimistic locking handled GET-then-PUT | **Deletes** the workflow (moves to HubSpot's deleted state, restorable in the UI within 90 days) | `{flow_id}` |
 
-All six resources support the full lifecycle: create, in-place update,
+All seven resources support the full lifecycle: create, in-place update,
 replace on immutable-field changes (planned at plan time via `RequiresReplace`,
 with data-loss warnings in the docs), drift detection (out-of-band deletions
 are re-created, out-of-band edits are corrected), and `terraform import`.
@@ -47,6 +48,7 @@ are re-created, out-of-band edits are corrected), and `terraform import`.
 | [`hubspot_pipeline`](./docs/data-sources/pipeline.md) | A pipeline (and its stages) by `object_type` + `pipeline_id` — e.g. to reference the built-in `default` pipeline's stage IDs |
 | [`hubspot_object_schema`](./docs/data-sources/object_schema.md) | A custom object schema by name, resolving its portal-specific `object_type_id` (`2-XXXX`) |
 | [`hubspot_association_labels`](./docs/data-sources/association_labels.md) | Every association label between an object-type pair — resolve portal-specific `type_id`s by name |
+| [`hubspot_workflow`](./docs/data-sources/workflow.md) | A workflow by `flow_id` or exact `name` — exposes the complete flow definition JSON, e.g. for point-in-time backups |
 
 ### Example
 
@@ -80,9 +82,8 @@ reference in [`docs/`](./docs/) (rendered on the registries once published).
 
 The full public roadmap lives in [`ROADMAP.md`](./ROADMAP.md). In short:
 
-- **Shipped:** properties, property groups, pipelines, custom object schemas, association labels, lists; data sources for property, properties (list), owner, portal, pipeline, object schema, and association labels
+- **Shipped:** properties, property groups, pipelines, custom object schemas, association labels, lists, workflows (Automation v4 beta API); data sources for property, properties (list), owner, portal, pipeline, object schema, association labels, and workflow
 - **Next (rest of Phase 3):** list membership (static-list fixtures), public-app webhooks
-- **Phase 4:** workflows as code (Automation v4 beta API)
 - **Phase 5:** users, `hubspot_crm_record` fixture escape hatch
 - **Phase 6:** v1.0 hardening + publication to both registries
 

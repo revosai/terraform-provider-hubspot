@@ -22,6 +22,7 @@ returns an actionable error instead.
 | `hubspot_object_schema` | **Deletes** the object type and **all its records** | Destructive — gated behind `force_delete = true`; performed as a two-phase archive-then-purge. |
 | `hubspot_association_label` | **Deletes** the label | Removes the label from **every record association** that uses it — a potentially wide blast radius. HubSpot-defined labels cannot be deleted. |
 | `hubspot_list` | **Archives** the list | Restorable within 90 days. Only the list definition is affected; records are never deleted. |
+| `hubspot_workflow` | **Deletes** the workflow (moves it to HubSpot's deleted state) | Enrolled objects are unenrolled. Restorable in the HubSpot UI within 90 days. |
 
 ## Common patterns
 
