@@ -41,6 +41,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-testing/compare"
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
@@ -79,6 +80,10 @@ func init() {
 	resource.AddTestSweepers("hubspot_object_schema", &resource.Sweeper{
 		Name: "hubspot_object_schema",
 		F:    sweepRealObjectSchemas,
+	})
+	resource.AddTestSweepers("hubspot_workflow", &resource.Sweeper{
+		Name: "hubspot_workflow",
+		F:    sweepRealWorkflows,
 	})
 }
 
@@ -636,6 +641,178 @@ func TestAccReal_propertyLifecycle(t *testing.T) {
 	})
 }
 
+// realContactWorkflowConfig renders a randomized CONTACT_FLOW whose single
+// delay action uses the given delta, mirroring the hermetic fixture. The
+// workflow is always created disabled: the enrollment tree (email IS_KNOWN)
+// would otherwise enroll every real contact in the test portal.
+func realContactWorkflowConfig(name string, delayMinutes int) string {
+	return realProviderConfig() + fmt.Sprintf(`
+resource "hubspot_workflow" "test" {
+  name      = %q
+  flow_type = "CONTACT_FLOW"
+  enabled   = false
+
+  flow_json = jsonencode({
+    startActionId = "1"
+    actions = [{
+      actionId          = "1"
+      type              = "SINGLE_CONNECTION"
+      actionTypeVersion = 0
+      actionTypeId      = "0-1"
+      fields = {
+        delta     = "%d"
+        time_unit = "MINUTES"
+      }
+    }]
+    enrollmentCriteria = {
+      shouldReEnroll = false
+      type           = "LIST_BASED"
+      listFilterBranch = {
+        filterBranchType     = "OR"
+        filterBranchOperator = "OR"
+        filterBranches = [{
+          filterBranchType     = "AND"
+          filterBranchOperator = "AND"
+          filters = [{
+            filterType = "PROPERTY"
+            property   = "email"
+            operation  = { operationType = "ALL_PROPERTY", operator = "IS_KNOWN" }
+          }]
+        }]
+      }
+    }
+  })
+}
+`, name, delayMinutes)
+}
+
+// TestAccReal_workflowLifecycle runs the workflow lifecycle against the real
+// Automation v4 beta API (requires the `automation` scope on the test token):
+// create → perpetual-diff guard (the semantic-equality type must absorb the
+// live API's flow normalization, not just the fake's model of it) → in-place
+// graph edit through the revisionId optimistic lock → rename → data-source
+// lookup by name → import round-trip, with CheckDestroy confirming the flow
+// is gone.
+func TestAccReal_workflowLifecycle(t *testing.T) {
+	requireRealPortal(t)
+
+	name := randomRealName("wf_")
+	renamed := name + "_v2"
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             checkRealWorkflowsDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: realContactWorkflowConfig(name, 5),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("hubspot_workflow.test",
+						tfjsonpath.New("name"), knownvalue.StringExact(name)),
+					statecheck.ExpectKnownValue("hubspot_workflow.test",
+						tfjsonpath.New("flow_type"), knownvalue.StringExact("CONTACT_FLOW")),
+					statecheck.ExpectKnownValue("hubspot_workflow.test",
+						tfjsonpath.New("enabled"), knownvalue.Bool(false)),
+					statecheck.ExpectKnownValue("hubspot_workflow.test",
+						tfjsonpath.New("object_type_id"), knownvalue.StringExact("0-1")),
+					statecheck.ExpectKnownValue("hubspot_workflow.test",
+						tfjsonpath.New("revision_id"), knownvalue.NotNull()),
+				},
+			},
+			// Identical config must plan empty — the core reason this layer
+			// exists: it catches live-API flow normalization the fake might
+			// model imperfectly.
+			{
+				Config: realContactWorkflowConfig(name, 5),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			// Graph edit: in-place update through GET-then-PUT revision lock.
+			{
+				Config: realContactWorkflowConfig(name, 10),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("hubspot_workflow.test",
+							plancheck.ResourceActionUpdate),
+					},
+				},
+			},
+			// Rename: in-place update; also proves the fresh revisionId from
+			// the previous PUT was persisted (a stale one would 409 here).
+			{
+				Config: realContactWorkflowConfig(renamed, 10),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("hubspot_workflow.test",
+							plancheck.ResourceActionUpdate),
+					},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("hubspot_workflow.test",
+						tfjsonpath.New("name"), knownvalue.StringExact(renamed)),
+				},
+			},
+			// Data source: resolve the flow by its exact name against the
+			// live paged listing; it must land on the managed flow's ID.
+			{
+				Config: realContactWorkflowConfig(renamed, 10) + fmt.Sprintf(`
+data "hubspot_workflow" "by_name" {
+  name       = %q
+  depends_on = [hubspot_workflow.test]
+}
+`, renamed),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.CompareValuePairs(
+						"hubspot_workflow.test", tfjsonpath.New("flow_id"),
+						"data.hubspot_workflow.by_name", tfjsonpath.New("flow_id"),
+						compare.ValuesSame(),
+					),
+				},
+			},
+			{
+				ResourceName:      "hubspot_workflow.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+				// The server returns the flow graph in its normalized
+				// (expanded) form, which differs textually from the configured
+				// JSON even though it is semantically equal.
+				ImportStateVerifyIgnore: []string{"flow_json"},
+			},
+		},
+	})
+}
+
+// checkRealWorkflowsDestroyed asserts every hubspot_workflow in state is gone
+// from the real API after destroy (GET by flow ID 404s once the delete
+// lands; a brief poll absorbs any deletion lag in the beta API).
+func checkRealWorkflowsDestroyed(s *terraform.State) error {
+	token := os.Getenv("HUBSPOT_ACCESS_TOKEN")
+	if token == "" {
+		return fmt.Errorf("HUBSPOT_ACCESS_TOKEN disappeared mid-test; cannot verify destroy")
+	}
+	for addr, rs := range s.RootModule().Resources {
+		if rs.Type != "hubspot_workflow" {
+			continue
+		}
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			status, err := realAPIStatus(token, "/automation/v4/flows/"+rs.Primary.ID)
+			if err != nil {
+				return fmt.Errorf("%s: checking destroy: %w", addr, err)
+			}
+			if status == http.StatusNotFound {
+				break
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("%s: workflow %s still live after destroy (status %d)",
+					addr, rs.Primary.ID, status)
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Sweepers: delete leaked tf_acc_test_* resources from the real test portal.
 // Run via `make sweep` (go test -sweep=all). They apply the same portal
@@ -694,6 +871,76 @@ func sweepRealContactPropertyGroups(_ string) error {
 		log.Printf("[INFO] sweeper hubspot_property_group: deleting leaked contacts group %q", name)
 		if err := realAPIDelete(token, "/crm/v3/properties/contacts/groups/"+name); err != nil {
 			return fmt.Errorf("sweeping property group %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// realAPIListFlows pages GET /automation/v4/flows and returns every flow's
+// ID and name.
+func realAPIListFlows(token string) ([][2]string, error) {
+	var flows [][2]string
+	after := ""
+	for {
+		path := "/automation/v4/flows?limit=100"
+		if after != "" {
+			path += "&after=" + after
+		}
+		req, err := http.NewRequest(http.MethodGet, realAPIBase+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := realHTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var body struct {
+			Results []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"results"`
+			Paging *struct {
+				Next *struct {
+					After string `json:"after"`
+				} `json:"next"`
+			} `json:"paging"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GET %s returned status %d", path, resp.StatusCode)
+		}
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decoding GET %s: %w", path, decodeErr)
+		}
+		for _, r := range body.Results {
+			flows = append(flows, [2]string{r.ID, r.Name})
+		}
+		if body.Paging == nil || body.Paging.Next == nil || body.Paging.Next.After == "" {
+			return flows, nil
+		}
+		after = body.Paging.Next.After
+	}
+}
+
+func sweepRealWorkflows(_ string) error {
+	token, ok, err := sweeperEnv("hubspot_workflow")
+	if err != nil || !ok {
+		return err
+	}
+	flows, err := realAPIListFlows(token)
+	if err != nil {
+		return fmt.Errorf("listing workflows: %w", err)
+	}
+	for _, fl := range flows {
+		id, name := fl[0], fl[1]
+		if !strings.HasPrefix(name, realTestPrefix) {
+			continue
+		}
+		log.Printf("[INFO] sweeper hubspot_workflow: deleting leaked workflow %q (id %s)", name, id)
+		if err := realAPIDelete(token, "/automation/v4/flows/"+id); err != nil {
+			return fmt.Errorf("sweeping workflow %s: %w", name, err)
 		}
 	}
 	return nil

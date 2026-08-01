@@ -27,8 +27,9 @@ Legacy alternative: settings gear → **Integrations → Private Apps** (newer
 UIs: Account Management → Integrations → Private Apps) → *Create a private
 app* → name it `terraform-provider-acceptance` → **Scopes**: grant
 Read+Write for `crm.schemas.contacts` (today's tests) plus
-`crm.schemas.companies`, `crm.schemas.deals`, `crm.schemas.custom` (upcoming
-phases). No `crm.objects.*` record scopes. Create → copy the `pat-…` token.
+`crm.schemas.companies`, `crm.schemas.deals`, `crm.schemas.custom`, and
+`automation` (workflow lifecycle test — Automation v4 beta). No
+`crm.objects.*` record scopes. Create → copy the `pat-…` token.
 
 Note the portal's **Hub ID** (top-right account menu / the number in the
 app.hubspot.com URL).
