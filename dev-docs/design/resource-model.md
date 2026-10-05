@@ -95,6 +95,58 @@ resource "hubspot_crm_record" "house_account" {
 - Requires `developer_api_key` provider attr; error cleanly if absent. v3-shaped now; keep the door open for a future journal-based (v4) resource rather than overloading this one.
 - Import: `{appId}` / `{appId}/{subscriptionId}`.
 
+### Reporting: `hubspot_dashboard`, `hubspot_report` (+ data sources)
+
+Backed by the **Analytics Reporting API, public beta** (`/analytics/reporting/2027-03-beta/…`, shipped 2026-09-15; per-portal opt-in via a product update). Beta-backed per the API stability policy. Source of truth for the wire shapes: HubSpot's OpenAPI spec `PublicApiSpecs/Analytics/Reporting/Rollouts/327896/2027-03-beta/reporting.json` in `HubSpot/HubSpot-public-api-spec-collection` (proprietary — **never vendor it into this repo**; the contract test fetches it at run time).
+
+**What the API can and cannot do (drives the whole design):**
+
+| Capability | API | Provider surface |
+|---|---|---|
+| Dashboard create / clone / PATCH metadata / archive / restore | ✅ | `hubspot_dashboard` resource |
+| Dashboard widgets: add/remove a report (`PUT`/`DELETE …/widgets/{reportId}`) | ✅ | `report_ids` (set) on `hubspot_dashboard` |
+| Widget **layout** (x, y, width, height) | read-only | computed `widgets[]` |
+| Report create **from scratch** | ❌ (no public report-configuration format) | — (plan-time error) |
+| Report **clone** + PATCH metadata / archive / restore | ✅ | `hubspot_report` resource (create = clone of `source_report_id`) |
+| Report configuration (query, visualization) | ❌ not even readable | not capturable — documented gap |
+| Tags | read-only | computed `tags[]` |
+| Search / get (incl. archived) | ✅ | 4 data sources + `raw_json` snapshots |
+| Export (CSV/PDF/… emailed to users) | side-effecting action on record data | **out of scope** (decision #4) |
+
+Scopes: `reporting.full.read` (read/search), `reporting.full.write` (create, clone, archive, restore, batch, widgets), `reporting.full.edit` (PATCH metadata + widgets, no create/clone; HubSpot's guide says it excludes create/delete, yet the spec allows the archiving `PATCH {archived}` under it — unverified on a real portal), `reporting.full.admin` (everything). The provider documents `read` + `write` as the requirement for the resources. A 403 (or 404 on every reporting route) usually means the portal has not opted into the beta or the token lacks the scope — translate into an actionable diagnostic (`reportingErrorDetail`).
+
+**Shared `permissions` block** (both resources; single nested attribute, required — the API requires it on create):
+
+```hcl
+permissions = {
+  type = "SPECIFIC"                      # PRIVATE | EVERYONE_VIEW | EVERYONE_EDIT | SPECIFIC
+  view = [{ type = "TEAM", id = "42" }]  # set of grants (USER|TEAM); only with SPECIFIC
+  edit = [{ type = "USER", id = "7" }]
+}
+```
+
+Wire mapping: dashboards carry `specificPermissions` as an **array** of `{permissionType: VIEW|EDIT, grants}`; reports carry a **single** `{permissionType, grants}` object — so a report allows only one of `view`/`edit` (plan-time validation). `SPECIFIC` requires ≥1 grant; non-`SPECIFIC` forbids grants. Empty grant sets are stored as null.
+
+#### `hubspot_dashboard`
+- `name` (req), `description` (opt; null clears via PATCH `null`), `business_unit_id` (opt+computed), `owner_user_id` (opt+computed; set by PATCH after create — create has no owner field), `permissions` (req).
+- `report_ids` (opt set): when set, the provider owns widget membership exactly (adds via PUT, removes via DELETE, diff by report ID); when **null**, widgets are unmanaged (UI-arranged dashboards stay untouched). Create passes `reportIdsToAdd` (documented best-effort) and then reconciles + verifies.
+- `clone_from_dashboard_id` / `clone_reports` (opt): create via `POST …/{id}/clone`. Create-time only — `RequiresReplace` only when the prior state value is non-null (`requiresReplaceIfPriorNotNull`), so imported dashboards never plan a replacement.
+- Computed: `id`, `widgets[] {report_id, x, y, width, height}`, `tags[] {id, name}`, `created_at`, `created_by_user_id`, `updated_at`, `updated_by_user_id`.
+- Read: `GET …/dashboards/{id}?properties=permissions,tags,widgets`; 404 or `archived=true` ⇒ remove from state.
+- Destroy = **archive** (`PATCH {archived: true}`, which cannot be combined with other fields) + confirming read (`GET ?archived=true`). Restorable.
+- Import: `{dashboardId}`.
+
+#### `hubspot_report`
+- Create = `POST …/reports/{source_report_id}/clone {name, permissions}` then PATCH for `description` / `business_unit_id` / `owner_user_id`. `source_report_id` null on create ⇒ **plan-time** error explaining that HubSpot has no public report-configuration format (build the template in the UI, then clone or import it). `requiresReplaceIfPriorNotNull` on `source_report_id`.
+- Same metadata attributes as the dashboard (`name`, `description`, `business_unit_id`, `owner_user_id`, `permissions`) + computed `tags`, timestamps.
+- Destroy = archive + confirming read (same as dashboard). An **imported** report is archived on destroy too — document `removed { lifecycle { destroy = false } }` (Terraform ≥ 1.7, OpenTofu ≥ 1.7) for releasing management without archiving.
+- Import: `{reportId}`.
+
+#### Data sources (the read-only / sync-to-repo surface)
+- `hubspot_dashboard` (by `id` xor exact `name`; not-found and multiple-matches diagnostics), `hubspot_dashboards` (filters `query`, `owner_user_ids`, `tag_ids`, `business_unit_ids`, `archived`, `include_widgets`), `hubspot_report` (by `id` xor exact `name`), `hubspot_reports` (filters `query`, `dashboard_id`, `on_dashboard`, `owner_user_ids`, `tag_ids`, `business_unit_ids`, `archived`). All paginate fully (`limit=100`, `after` cursor).
+- Every item exposes all typed fields **plus `raw_json`**: the API object canonicalized (sorted keys, 2-space indent, trailing newline) with volatile view-tracking fields (`lastViewedAt`, `lastViewedByUserId`) stripped — so `local_file` snapshots committed to git diff only on real changes, and fields HubSpot adds later (e.g. a future report configuration) are captured without a provider release.
+- Sync-to-repo workflow (guide `reporting-as-code`): `import` blocks + `plan -generate-config-out` (Terraform and OpenTofu) to adopt existing dashboards/reports; `local_file` + `raw_json` for full-fidelity snapshots; `check` blocks for drift alerts. Terraform-only list resources (`terraform query`) are a possible later addition, never the documented primary path (decision #11).
+
 ## 3. Data sources (ship early — they unlock references to unmanaged config)
 
 `hubspot_property` / `hubspot_properties`, `hubspot_pipeline` (exposes `stages[]` with IDs — critical for referencing default-pipeline stages), `hubspot_object_schema`, `hubspot_owner` (by email), `hubspot_team`, `hubspot_role`, `hubspot_association_labels` (needed for HUBSPOT_DEFINED typeIds, e.g. primary company = 1), `hubspot_portal` (account-info: portal_id, time_zone). All name-based lookups need both "not found" and "multiple matches" diagnostics.
@@ -132,5 +184,7 @@ Validate token at Configure with `GET /account-info/v3/details` (cache `portal_i
 | pipeline | true delete, guarded by validateReferencesBeforeDelete |
 | association label | true delete (strips label from all records) |
 | webhook subscription | true delete |
+| dashboard | archive (restorable) + confirming read |
+| report | archive (restorable) + confirming read; imported reports too — use a `removed` block to release without archiving |
 | user | deprovision (hard remove; Super Admins not deletable via API) |
 | crm_record | archive; optional GDPR purge flag |
