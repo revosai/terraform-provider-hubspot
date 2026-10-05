@@ -82,6 +82,23 @@ automation).
 | `hubspot_workflow` (raw JSON flow graph, `revisionId` optimistic locking) | Automation v4 (**beta**) | ✅ shipped |
 | `data.hubspot_workflow` (lookup by flow ID or exact name) | Automation v4 (**beta**) | ✅ shipped |
 
+### Reporting — dashboards & reports (v0.3, beta API)
+
+Reporting configuration as code via the Analytics Reporting API **beta**
+(`/analytics/reporting/2027-03-beta`, released September 2026; each portal
+opts in via a product update). The API manages report and dashboard
+*metadata*, permissions and dashboard widgets — it does not expose a report's
+configuration (query, visualization), so reports are created by cloning a
+UI-built template.
+
+| Resource | Backing API | Status |
+|---|---|---|
+| `hubspot_dashboard` (permissions, widget membership via `report_ids`, clone, archive-on-destroy) | Analytics Reporting (**beta**) | ✅ shipped |
+| `hubspot_report` (clone from a template report, metadata + permissions, archive-on-destroy) | Analytics Reporting (**beta**) | ✅ shipped |
+| `data.hubspot_dashboard(s)`, `data.hubspot_report(s)` (lookup/search + `raw_json` snapshots for git) | Analytics Reporting (**beta**) | ✅ shipped |
+| Report configuration (query/visualization) as code | none — no public format yet | ⏳ blocked on HubSpot |
+| Widget positioning | none — layout is read-only | ⏳ blocked on HubSpot |
+
 ### Phase 5 — people + escape hatch (v0.7)
 
 | Resource | Notes |
