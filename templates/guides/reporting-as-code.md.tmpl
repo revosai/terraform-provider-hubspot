@@ -48,7 +48,8 @@ Building what a report *shows* still happens in the HubSpot UI.
 |---|---|
 | `reporting.full.read` | Read and search dashboards and reports (every data source, and every plan/refresh) |
 | `reporting.full.write` | Create and clone dashboards, clone reports, archive and restore (single and batch), plus everything `reporting.full.edit` allows |
-| `reporting.full.edit` | Update metadata and add/remove dashboard widgets — but not create, clone or archive |
+| `reporting.full.edit` | Update metadata and add/remove dashboard widgets — not create or clone (HubSpot documents it as excluding create/delete) |
+| `reporting.full.admin` | Everything above |
 
 For the resources, grant `reporting.full.read` **and** `reporting.full.write`.
 A read-only snapshot pipeline (workflow 3) needs only `reporting.full.read`.
@@ -232,8 +233,9 @@ removed {
 }
 ```
 
-OpenTofu's `removed` blocks never destroy, so on OpenTofu releases that do
-not accept the `lifecycle` block inside `removed`, `from` alone is enough.
+This form is accepted by current Terraform and OpenTofu releases. Older
+OpenTofu releases reject `lifecycle` inside `removed`, but their `removed`
+blocks only ever forget (never destroy), so `from` alone is enough there.
 `terraform state rm hubspot_report.arr` (or `tofu state rm …`) does the same
 imperatively.
 

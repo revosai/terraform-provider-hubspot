@@ -145,6 +145,7 @@ func TestValidatePermissions(t *testing.T) {
 		{"specific view ok", permObj(t, "SPECIFIC", view, nullGrants), true, ""},
 		{"specific both ok on dashboard", permObj(t, "SPECIFIC", view, edit), false, ""},
 		{"specific both rejected on report", permObj(t, "SPECIFIC", view, edit), true, "Too many permission levels"},
+		{"same grantee at both levels", permObj(t, "SPECIFIC", view, grantSet(t, [2]string{"USER", "1"})), false, "Grantee in both view and edit"},
 		{"specific without grants", permObj(t, "SPECIFIC", nullGrants, nullGrants), false, "Missing permission grants"},
 		{"grants without specific", permObj(t, "EVERYONE_EDIT", view, nullGrants), false, "Grants require SPECIFIC"},
 		{"unknown skipped", types.ObjectUnknown(reportingPermissionsAttrTypes), true, ""},

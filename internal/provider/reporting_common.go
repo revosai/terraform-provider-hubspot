@@ -402,6 +402,20 @@ func validatePermissions(ctx context.Context, obj types.Object, attrPath path.Pa
 		if forReport && nView > 0 && nEdit > 0 {
 			diags.AddAttributeError(attrPath, "Too many permission levels for a report",
 				"HubSpot reports carry a single specific-permission level: set either `view` or `edit`, not both.")
+			return diags
+		}
+		// HubSpot rejects a grantee listed at both levels (EDIT implies VIEW).
+		inView := map[string]bool{}
+		for _, e := range m.View.Elements() {
+			inView[e.String()] = true
+		}
+		for _, e := range m.Edit.Elements() {
+			if inView[e.String()] {
+				diags.AddAttributeError(attrPath, "Grantee in both view and edit",
+					"A user or team cannot appear in both permissions.view and permissions.edit; "+
+						"edit access already includes view access.")
+				break
+			}
 		}
 		return diags
 	}
@@ -662,7 +676,7 @@ func reportingErrorDetail(err error) string {
 		msg += "\n\nA 403 from the Reporting API usually means one of: (1) the portal has not opted into the " +
 			"Analytics Reporting API public beta (enable the associated product update in HubSpot); (2) the " +
 			"token lacks the `reporting.full.read` scope (reads) or `reporting.full.write` scope (create, " +
-			"clone, archive) — `reporting.full.edit` only allows metadata updates; (3) the token's user cannot " +
+			"clone, archive) — `reporting.full.edit` alone cannot create or clone; (3) the token's user cannot " +
 			"access this object under its current permissions."
 	}
 	return msg

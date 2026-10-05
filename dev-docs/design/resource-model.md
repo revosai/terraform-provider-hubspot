@@ -113,7 +113,7 @@ Backed by the **Analytics Reporting API, public beta** (`/analytics/reporting/20
 | Search / get (incl. archived) | ✅ | 4 data sources + `raw_json` snapshots |
 | Export (CSV/PDF/… emailed to users) | side-effecting action on record data | **out of scope** (decision #4) |
 
-Scopes: `reporting.full.read` (read/search), `reporting.full.write` (create, clone, archive, restore, batch, widgets), `reporting.full.edit` (PATCH metadata + widgets, no create/archive). A 403 (or 404 on every reporting route) usually means the portal has not opted into the beta or the token lacks the scope — translate into an actionable diagnostic (`reportingErrorDetail`).
+Scopes: `reporting.full.read` (read/search), `reporting.full.write` (create, clone, archive, restore, batch, widgets), `reporting.full.edit` (PATCH metadata + widgets, no create/clone; HubSpot's guide says it excludes create/delete, yet the spec allows the archiving `PATCH {archived}` under it — unverified on a real portal), `reporting.full.admin` (everything). The provider documents `read` + `write` as the requirement for the resources. A 403 (or 404 on every reporting route) usually means the portal has not opted into the beta or the token lacks the scope — translate into an actionable diagnostic (`reportingErrorDetail`).
 
 **Shared `permissions` block** (both resources; single nested attribute, required — the API requires it on create):
 
