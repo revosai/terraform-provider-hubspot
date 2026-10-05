@@ -231,6 +231,7 @@ type fakeHubSpot struct {
 	flows           map[string]*fakeFlow                // flowId -> flow
 	owners          []*fakeOwner
 	portalID        int64
+	reporting       *fakeReporting // lazily created; see fake_reporting_test.go
 	pipelineCounter int
 	stageCounter    int
 	schemaCounter   int
@@ -371,6 +372,12 @@ func (f *fakeHubSpot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// crm/v3/lists[/...] — resource hubspot_list.
 	if len(parts) >= 3 && parts[0] == "crm" && parts[1] == "v3" && parts[2] == "lists" {
 		f.listsRoute(w, r, parts[3:])
+		return
+	}
+	// analytics/reporting/2027-03-beta/{dashboards|reports}[/...] — resources
+	// hubspot_dashboard / hubspot_report (see fake_reporting_test.go).
+	if len(parts) >= 3 && parts[0] == "analytics" && parts[1] == "reporting" && parts[2] == "2027-03-beta" {
+		f.reportingRoute(w, r, parts[3:])
 		return
 	}
 	// automation/v4/flows[/{flowId}] — resource hubspot_workflow.
