@@ -410,6 +410,16 @@ func decodePermissions(kind string, raw json.RawMessage) (string, []fakeSpecific
 		}
 		specific = []fakeSpecificPermission{one}
 	}
+	// A grantee cannot appear in both the VIEW and the EDIT configuration.
+	seen := map[fakeGrant]string{}
+	for _, sp := range specific {
+		for _, g := range sp.Grants {
+			if lvl, dup := seen[g]; dup && lvl != sp.PermissionType {
+				return "", nil, "a user or team cannot appear in both VIEW and EDIT specificPermissions"
+			}
+			seen[g] = sp.PermissionType
+		}
+	}
 	for _, sp := range specific {
 		if sp.PermissionType != "VIEW" && sp.PermissionType != "EDIT" {
 			return "", nil, "specificPermissions.permissionType must be VIEW or EDIT"
@@ -592,7 +602,11 @@ func (fr *fakeReporting) batchArchive(w http.ResponseWriter, kind string, body [
 		writeHubSpotError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
-	var results []map[string]any
+	started := ""
+	if !archive {
+		started = fr.tick()
+	}
+	results := []map[string]any{} // never null: `results` is a required array
 	for _, id := range in.Inputs {
 		if o := fr.lookup(kind, id, !archive); o != nil {
 			fr.setArchived(kind, o, archive)
@@ -603,7 +617,11 @@ func (fr *fakeReporting) batchArchive(w http.ResponseWriter, kind string, body [
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "COMPLETE", "results": results})
+	// BatchResponsePublic{Dashboard,Report} requires startedAt/completedAt.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "COMPLETE", "results": results,
+		"requestedAt": started, "startedAt": started, "completedAt": fr.tick(),
+	})
 }
 
 func (fr *fakeReporting) clone(w http.ResponseWriter, kind, id string, body []byte) {
