@@ -337,7 +337,7 @@ data "hubspot_dashboard" "test" {}
 func TestAccDashboardDataSource_betaNotEnabled(t *testing.T) {
 	f, srv := newFakeHubSpot(t)
 	id := f.seedDashboard("Sales overview")
-	f.setReportingDisabled(true)
+	f.disableReporting()
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,

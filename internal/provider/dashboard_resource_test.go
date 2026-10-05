@@ -765,7 +765,7 @@ func TestAccDashboard_validation(t *testing.T) {
 // guidance.
 func TestAccDashboard_betaNotEnabled(t *testing.T) {
 	f, srv := newFakeHubSpot(t)
-	f.setReportingDisabled(true)
+	f.disableReporting()
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{

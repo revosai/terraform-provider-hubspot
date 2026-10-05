@@ -215,11 +215,11 @@ func (f *fakeHubSpot) reportingObjectsNamed(kind, name string) []string {
 	return ids
 }
 
-// setReportingDisabled simulates a portal that has not opted into the beta.
-func (f *fakeHubSpot) setReportingDisabled(disabled bool) {
+// disableReporting simulates a portal that has not opted into the beta.
+func (f *fakeHubSpot) disableReporting() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.rep().disabled = disabled
+	f.rep().disabled = true
 }
 
 // reportingRequests returns every reporting request received so far

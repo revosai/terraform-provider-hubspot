@@ -678,7 +678,7 @@ func TestAccReportResource_disappearsDeleted(t *testing.T) {
 func TestAccReportResource_betaNotEnabled(t *testing.T) {
 	f, srv := newFakeHubSpot(t)
 	src := f.seedReport("Template")
-	f.setReportingDisabled(true)
+	f.disableReporting()
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,

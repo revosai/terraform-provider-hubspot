@@ -1,0 +1,378 @@
+---
+page_title: "Reporting as code"
+subcategory: ""
+description: |-
+  Manage HubSpot dashboards and reports with the Analytics Reporting API beta: dashboards as code, cloning template reports, adopting existing reporting, and git snapshots that show UI changes.
+---
+
+# Reporting as code
+
+The `hubspot_dashboard` and `hubspot_report` resources and the
+`hubspot_dashboard(s)` / `hubspot_report(s)` data sources use HubSpot's
+**Analytics Reporting API, a public beta** (`/analytics/reporting/2027-03-beta`).
+This guide covers what the API can and cannot do, then three workflows:
+
+1. [Manage dashboards as code](#1-manage-dashboards-as-code)
+2. [Clone and manage reports](#2-clone-and-manage-reports)
+3. [Adopt existing reporting and sync it to a repository](#3-adopt-existing-reporting-and-sync-it-to-a-repository)
+
+Commands are shown for Terraform; under OpenTofu, substitute `tofu` for
+`terraform` (every workflow here works the same way with both).
+
+## What the API can and cannot do
+
+| Capability | API | Provider surface |
+|---|---|---|
+| Dashboard create, clone, update metadata, archive, restore | Yes | `hubspot_dashboard` |
+| Add or remove a report on a dashboard | Yes | `hubspot_dashboard.report_ids` |
+| Widget **layout** (position and size) | Read-only | computed `hubspot_dashboard.widgets` |
+| Report create **from scratch** | **No** — there is no public report-configuration format | — |
+| Report clone, update metadata, archive, restore | Yes | `hubspot_report` (create = clone of `source_report_id`) |
+| Report configuration (data source, query, filters, visualization) | **No** — not even readable | not capturable |
+| Tags | Read-only | computed `tags` |
+| Search and read (including archived objects) | Yes | data sources, with `raw_json` snapshots |
+| Export (CSV/PDF/… emailed to users) | Yes | intentionally unsupported |
+
+"Metadata" means name, description, business unit, owner and permissions.
+Building what a report *shows* still happens in the HubSpot UI.
+
+## Before you start: beta opt-in and scopes
+
+- **Opt the portal into the beta.** The Reporting API only works on portals
+  that have opted into the Analytics Reporting API public beta (a super admin
+  enables the associated product update in HubSpot). Until then every call
+  fails with 403 (or 404), which the provider reports with this hint.
+- **Grant the token the reporting scopes** on its service key or private app:
+
+| Scope | Allows |
+|---|---|
+| `reporting.full.read` | Read and search dashboards and reports (every data source, and every plan/refresh) |
+| `reporting.full.write` | Create and clone dashboards, clone reports, archive and restore (single and batch), plus everything `reporting.full.edit` allows |
+| `reporting.full.edit` | Update metadata and add/remove dashboard widgets — not create or clone (HubSpot documents it as excluding create/delete) |
+| `reporting.full.admin` | Everything above |
+
+For the resources, grant `reporting.full.read` **and** `reporting.full.write`.
+A read-only snapshot pipeline (workflow 3) needs only `reporting.full.read`.
+The token's user must also be able to access each dashboard or report under
+HubSpot's own sharing rules — a `PRIVATE` object owned by someone else is
+invisible to it.
+
+Because the API is in beta, its shape may change. Breaking changes are
+handled per the provider's
+[API stability policy](https://github.com/revosai/terraform-provider-hubspot/blob/main/ROADMAP.md#api-stability-policy).
+
+## Permissions
+
+Both resources take a required `permissions` attribute:
+
+```terraform
+permissions = {
+  type = "SPECIFIC" # PRIVATE | EVERYONE_VIEW | EVERYONE_EDIT | SPECIFIC
+  view = [{ type = "TEAM", id = "42" }]
+  edit = [{ type = "USER", id = "7" }]
+}
+```
+
+`view` and `edit` are sets of `USER` / `TEAM` grants, allowed only with
+`type = "SPECIFIC"` (which requires at least one grant). A **report** carries
+a single permission level, so it accepts `view` **or** `edit`, not both. A
+user or team cannot appear in both `view` and `edit`.
+
+## 1. Manage dashboards as code
+
+`report_ids` makes Terraform own the dashboard's membership exactly: reports
+missing from the set are removed, new ones added.
+
+```terraform
+data "hubspot_report" "pipeline" {
+  name = "Deal pipeline by stage"
+}
+
+data "hubspot_report" "arr" {
+  name = "ARR by quarter"
+}
+
+resource "hubspot_dashboard" "exec" {
+  name        = "Executive overview"
+  description = "Weekly leadership review. Managed in Terraform."
+
+  permissions = {
+    type = "SPECIFIC"
+    view = [{ type = "TEAM", id = "42" }]
+    edit = [{ type = "USER", id = "7" }]
+  }
+
+  report_ids = [
+    data.hubspot_report.pipeline.id,
+    data.hubspot_report.arr.id,
+  ]
+}
+```
+
+- **Leave `report_ids` unset to keep widgets unmanaged.** Terraform then
+  manages only the dashboard's metadata, and reports added, removed or
+  arranged in the UI are never touched.
+- **Layout and tags are read-only.** New widgets get a position chosen by
+  HubSpot; drag them into place in the UI — Terraform reports the result in
+  `widgets` (`report_id`, `x`, `y`, `width`, `height`) but never moves them.
+  Tags are exposed as `tags` and can only be set in the UI.
+- **Destroy archives** the dashboard (restorable in HubSpot); it is not
+  deleted.
+
+### Clone a template dashboard per business unit
+
+Build a template dashboard once in the UI, then stamp out copies.
+`clone_from_dashboard_id` creates the dashboard as a clone; `clone_reports`
+chooses whether the copy gets **its own copies** of the template's reports
+(`true`) or **shares** the template's reports (`false`).
+
+```terraform
+variable "business_units" {
+  description = "Business unit IDs by short name."
+  type        = map(string)
+  default = {
+    emea = "1234567"
+    apac = "2345678"
+  }
+}
+
+data "hubspot_dashboard" "sales_template" {
+  name = "TEMPLATE - Sales overview"
+}
+
+resource "hubspot_dashboard" "sales" {
+  for_each = var.business_units
+
+  clone_from_dashboard_id = data.hubspot_dashboard.sales_template.id
+  clone_reports           = true
+
+  name             = "Sales overview - ${upper(each.key)}"
+  business_unit_id = each.value
+
+  permissions = {
+    type = "EVERYONE_VIEW"
+  }
+}
+```
+
+Cloning happens once, at create: later edits to the template do not
+propagate to the copies, and changing `clone_from_dashboard_id` or
+`clone_reports` on an existing dashboard replaces it (archives it and clones
+again). With `report_ids` unset, the cloned widgets stay unmanaged.
+
+## 2. Clone and manage reports
+
+The API cannot create a report from scratch, so `hubspot_report` creates a
+report by **cloning** an existing one. Build a template report in the UI,
+then clone it as often as you need, each copy with its own name, owner,
+business unit and permissions:
+
+```terraform
+data "hubspot_report" "template" {
+  name = "TEMPLATE - Pipeline by stage"
+}
+
+resource "hubspot_report" "pipeline_emea" {
+  source_report_id = data.hubspot_report.template.id
+
+  name             = "Pipeline by stage - EMEA"
+  description      = "Cloned from the template report. Managed in Terraform."
+  business_unit_id = var.business_units["emea"]
+
+  permissions = {
+    type = "SPECIFIC"
+    view = [{ type = "TEAM", id = "42" }]
+  }
+}
+```
+
+A clone copies the template's configuration at create time; changing
+`source_report_id` on an existing report replaces it. Omitting
+`source_report_id` on a new report is a plan-time error.
+
+### Manage an existing report's metadata
+
+To manage the name, description, owner or permissions of a report that
+already exists, import it (no `source_report_id` needed):
+
+```terraform
+import {
+  to = hubspot_report.arr
+  id = "123456789" # the report ID from its HubSpot URL
+}
+
+resource "hubspot_report" "arr" {
+  name = "ARR by quarter"
+
+  permissions = {
+    type = "EVERYONE_VIEW"
+  }
+}
+```
+
+Write down every attribute you want to keep: an omitted `description` is
+cleared on the next apply (`business_unit_id` and `owner_user_id` keep their
+current values when omitted). Or import from the command line:
+`terraform import hubspot_report.arr 123456789`
+(dashboards import the same way, by dashboard ID).
+
+### Destroy archives — even imported reports
+
+Destroying a `hubspot_report` (or removing it from configuration) **archives**
+the report in HubSpot; archived reports can be restored in HubSpot. This applies to imported reports too. To
+stop managing a report or dashboard **without** archiving it, replace its
+resource block with a `removed` block (Terraform ≥ 1.7, OpenTofu ≥ 1.7):
+
+```terraform
+removed {
+  from = hubspot_report.arr
+
+  lifecycle {
+    destroy = false
+  }
+}
+```
+
+This form is accepted by current Terraform and OpenTofu releases. Older
+OpenTofu releases reject `lifecycle` inside `removed`, but their `removed`
+blocks only ever forget (never destroy), so `from` alone is enough there.
+`terraform state rm hubspot_report.arr` (or `tofu state rm …`) does the same
+imperatively.
+
+## 3. Adopt existing reporting and sync it to a repository
+
+### Adopt existing dashboards and reports
+
+To bring a portal's existing reporting under management, list it with the
+data sources and import it. Configuration generation writes the resource
+blocks for you; it needs one plain `import` block per object:
+
+```terraform
+import {
+  to = hubspot_dashboard.exec
+  id = "987654321"
+}
+```
+
+```shell
+terraform plan -generate-config-out=reporting.tf
+# or: tofu plan -generate-config-out=reporting.tf
+```
+
+Review `reporting.tf`, trim it to the attributes you want to own, and apply.
+To find the IDs, use `data "hubspot_dashboards"` / `data "hubspot_reports"`
+with an output of their `ids`.
+
+To adopt a whole set at once, use `for_each` in the `import` block
+(Terraform ≥ 1.7, OpenTofu ≥ 1.7) together with a matching `for_each`
+resource. Here Terraform enforces one permission policy on every dashboard
+tagged "Sales" (tag ID `77`), while names and descriptions follow whatever
+is set in HubSpot:
+
+```terraform
+data "hubspot_dashboards" "sales" {
+  tag_ids = ["77"]
+}
+
+locals {
+  sales_dashboards = { for d in data.hubspot_dashboards.sales.dashboards : d.id => d }
+}
+
+import {
+  for_each = toset(data.hubspot_dashboards.sales.ids)
+  to       = hubspot_dashboard.sales_policy[each.key]
+  id       = each.key
+}
+
+resource "hubspot_dashboard" "sales_policy" {
+  for_each = local.sales_dashboards
+
+  name        = each.value.name
+  description = each.value.description
+
+  permissions = {
+    type = "SPECIFIC"
+    view = [{ type = "TEAM", id = "42" }]
+  }
+}
+```
+
+Configuration generation does not support `for_each` imports, so this
+pattern is for adoption with configuration you write yourself.
+
+### Snapshot reporting into git
+
+The data sources expose every dashboard and report as `raw_json`: the full
+API object as stable, canonical JSON (sorted keys, view-tracking fields such
+as `lastViewedAt` stripped). Writing it to files with the
+[`hashicorp/local`](https://registry.terraform.io/providers/hashicorp/local/latest)
+provider gives you a reviewable history of the portal's reporting:
+
+```terraform
+data "hubspot_dashboards" "all" {}
+
+data "hubspot_reports" "all" {}
+
+resource "local_file" "dashboard" {
+  for_each = { for d in data.hubspot_dashboards.all.dashboards : d.id => d }
+
+  filename = "${path.module}/snapshots/dashboards/${each.key}.json"
+  content  = each.value.raw_json
+}
+
+resource "local_file" "report" {
+  for_each = { for r in data.hubspot_reports.all.reports : r.id => r }
+
+  filename = "${path.module}/snapshots/reports/${each.key}.json"
+  content  = each.value.raw_json
+}
+```
+
+```shell
+terraform apply   # or: tofu apply
+git add snapshots/ && git diff --cached --stat
+```
+
+Run it on a schedule (for example in CI) and commit the result: renames,
+permission changes, added or removed widgets and layout moves made in the UI
+show up as ordinary `git diff`s, and archived objects show up as deleted
+files. The snapshot needs only `reporting.full.read`. Add filters such as
+`query`, `owner_user_ids`, `tag_ids`, `business_unit_ids` or `archived`
+(and, for reports, `dashboard_id` or `on_dashboard`) to scope it.
+
+### Alert on drift with a check block
+
+A `check` block (Terraform ≥ 1.5, OpenTofu ≥ 1.6) warns on every plan when
+a dashboard no longer contains the reports it should — useful for dashboards
+whose widgets are deliberately left unmanaged:
+
+```terraform
+check "exec_dashboard_reports" {
+  data "hubspot_dashboard" "exec" {
+    name = "Executive overview"
+  }
+
+  assert {
+    condition = alltrue([
+      for id in [data.hubspot_report.pipeline.id, data.hubspot_report.arr.id] :
+      contains(data.hubspot_dashboard.exec.report_ids, id)
+    ])
+    error_message = "The Executive overview dashboard is missing one of its required reports."
+  }
+}
+```
+
+## Limitations
+
+- **Report configuration cannot be captured.** What a report queries and how
+  it is visualized is neither readable nor writable through the API, so it
+  is not in state or in `raw_json`. Snapshots track a report's metadata only;
+  keep template reports in the UI and clone them. If HubSpot later exposes
+  the configuration, `raw_json` picks it up without a provider release.
+- **Widget positions cannot be set.** Layout is read-only; arrange widgets in
+  the UI.
+- **Tags are read-only.**
+- **Export is intentionally unsupported.** The export endpoints email CRM
+  data to users — a side effect, not configuration.
+- **Beta.** The API may change or require a newer provider version; pin the
+  provider version for reporting configurations.

@@ -189,7 +189,7 @@ data "hubspot_report" "test" {
 func TestAccReportDataSource_betaNotEnabled(t *testing.T) {
 	f, srv := newFakeHubSpot(t)
 	id := f.seedReport("Revenue by rep")
-	f.setReportingDisabled(true)
+	f.disableReporting()
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,

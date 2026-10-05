@@ -208,7 +208,7 @@ data "hubspot_dashboards" "none" {
 // TestAccDashboardsDataSource_betaNotEnabled translates the beta 403.
 func TestAccDashboardsDataSource_betaNotEnabled(t *testing.T) {
 	f, srv := newFakeHubSpot(t)
-	f.setReportingDisabled(true)
+	f.disableReporting()
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{{
