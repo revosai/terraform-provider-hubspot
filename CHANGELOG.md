@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (Unreleased)
+## 0.3.0 (October 12, 2026)
 
 FEATURES:
 
