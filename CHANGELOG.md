@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (Unreleased)
+
+FEATURES:
+
+* **New Resource:** `hubspot_dashboard` — manage reporting dashboards via the Analytics Reporting API **beta**: name/description/owner/business unit, `permissions` (`PRIVATE`/`EVERYONE_VIEW`/`EVERYONE_EDIT`/`SPECIFIC` with user/team view & edit grants), exact widget membership through `report_ids` (null = widgets left unmanaged), create-time cloning (`clone_from_dashboard_id`, `clone_reports`); read-only `widgets` layout and `tags`; destroy archives (restorable); import by dashboard ID
+* **New Resource:** `hubspot_report` — manage reports via the Analytics Reporting API **beta**: created by cloning a UI-built template (`source_report_id`; the API has no from-scratch create), metadata and `permissions` managed in place, existing reports adoptable via import; destroy archives (restorable)
+* **New Data Source:** `hubspot_dashboard` / `hubspot_report` — look up by ID or exact name (incl. archived), exposing every API field plus `raw_json`, a canonical snapshot (sorted keys, view-tracking fields stripped) for committing reporting configuration to git
+* **New Data Source:** `hubspot_dashboards` / `hubspot_reports` — search with owner/tag/business-unit/dashboard/archived filters, fully paginated, each item with `raw_json`
+* **New Guide:** "Reporting as code" — managing dashboards and reports, adopting an existing portal with `import` + `-generate-config-out`, and full-fidelity snapshots of reporting configuration (Terraform and OpenTofu)
+
 ## 0.2.0 (August 19, 2026)
 
 FEATURES:

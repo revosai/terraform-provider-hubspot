@@ -31,8 +31,10 @@ trail.
 | [`hubspot_association_label`](./docs/resources/association_label.md) | Custom association labels between two object types (Pro/Ent), paired or unpaired | **Deletes** the label — removing it from every record association that uses it | `{from_object_type}/{to_object_type}/{type_id}` |
 | [`hubspot_list`](./docs/resources/list.md) | CRM lists (`MANUAL`/`DYNAMIC`/`SNAPSHOT`) — the list *definition* only, never membership; `filter_branch` is compared semantically to absorb server-injected defaults | **Archives** the list (restorable within 90 days) | `{list_id}` |
 | [`hubspot_workflow`](./docs/resources/workflow.md) | Workflows via the Automation v4 **beta** API — raw JSON `flow_json` graph compared semantically, `revisionId` optimistic locking handled GET-then-PUT | **Deletes** the workflow (moves to HubSpot's deleted state, restorable in the UI within 90 days) | `{flow_id}` |
+| [`hubspot_dashboard`](./docs/resources/dashboard.md) | Reporting dashboards via the Analytics Reporting **beta** API — metadata, permissions, exact widget membership (`report_ids`), create-time cloning; widget layout and tags are read-only | **Archives** the dashboard (restorable) | `{dashboard_id}` |
+| [`hubspot_report`](./docs/resources/report.md) | Reports via the Analytics Reporting **beta** API — created by cloning a UI-built template report (no from-scratch create in the API), metadata and permissions; the report's query/visualization stays UI-managed | **Archives** the report (restorable) — also for imported reports; use a `removed` block to stop managing without archiving | `{report_id}` |
 
-All seven resources support the full lifecycle: create, in-place update,
+All nine resources support the full lifecycle: create, in-place update,
 replace on immutable-field changes (planned at plan time via `RequiresReplace`,
 with data-loss warnings in the docs), drift detection (out-of-band deletions
 are re-created, out-of-band edits are corrected), and `terraform import`.
@@ -49,6 +51,8 @@ are re-created, out-of-band edits are corrected), and `terraform import`.
 | [`hubspot_object_schema`](./docs/data-sources/object_schema.md) | A custom object schema by name, resolving its portal-specific `object_type_id` (`2-XXXX`) |
 | [`hubspot_association_labels`](./docs/data-sources/association_labels.md) | Every association label between an object-type pair — resolve portal-specific `type_id`s by name |
 | [`hubspot_workflow`](./docs/data-sources/workflow.md) | A workflow by `flow_id` or exact `name` — exposes the complete flow definition JSON, e.g. for point-in-time backups |
+| [`hubspot_dashboard`](./docs/data-sources/dashboard.md) / [`hubspot_dashboards`](./docs/data-sources/dashboards.md) | A dashboard by `id` or exact `name`, or a filtered search — widgets, permissions, tags, plus `raw_json` snapshots for committing reporting configuration to git |
+| [`hubspot_report`](./docs/data-sources/report.md) / [`hubspot_reports`](./docs/data-sources/reports.md) | A report by `id` or exact `name`, or a filtered search (e.g. every report on a dashboard) — with `raw_json` snapshots |
 
 ### Example
 

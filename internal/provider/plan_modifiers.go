@@ -6,7 +6,9 @@ package provider
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 )
 
 // keepStateList is a list plan modifier for create-time bootstrap attributes:
@@ -62,4 +64,31 @@ func (keepStateSet) PlanModifySet(_ context.Context, req planmodifier.SetRequest
 		return
 	}
 	resp.PlanValue = req.StateValue
+}
+
+// requiresReplaceIfPriorNotNull returns a RequiresReplace string modifier for
+// create-time-only arguments (e.g. clone sources): a change forces
+// replacement only when the prior state value is non-null. Imported objects
+// have a null prior value, so adding the argument to their configuration
+// after import never plans a destructive replacement.
+func requiresReplaceIfPriorNotNull() planmodifier.String {
+	return stringplanmodifier.RequiresReplaceIf(
+		func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+			resp.RequiresReplace = !req.StateValue.IsNull()
+		},
+		"Changing this create-time argument forces replacement (unless the prior value is null, e.g. after import).",
+		"Changing this create-time argument forces replacement (unless the prior value is null, e.g. after import).",
+	)
+}
+
+// requiresReplaceIfPriorNotNullBool is the bool counterpart of
+// requiresReplaceIfPriorNotNull.
+func requiresReplaceIfPriorNotNullBool() planmodifier.Bool {
+	return boolplanmodifier.RequiresReplaceIf(
+		func(_ context.Context, req planmodifier.BoolRequest, resp *boolplanmodifier.RequiresReplaceIfFuncResponse) {
+			resp.RequiresReplace = !req.StateValue.IsNull()
+		},
+		"Changing this create-time argument forces replacement (unless the prior value is null, e.g. after import).",
+		"Changing this create-time argument forces replacement (unless the prior value is null, e.g. after import).",
+	)
 }

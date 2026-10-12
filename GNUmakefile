@@ -1,6 +1,6 @@
 default: build
 
-.PHONY: build install lint generate docs fmt fmt-examples misspell validate-docs check-descriptions docs-check test testacc testacc-real sweep
+.PHONY: build install lint generate docs fmt fmt-examples misspell validate-docs check-descriptions docs-check test test-contract testacc testacc-real sweep
 
 build:
 	go build ./...
@@ -43,6 +43,12 @@ fmt:
 
 test:
 	go test ./... -count=1 -timeout=5m
+
+# Validate the hermetic fakes against HubSpot's published OpenAPI specs
+# (kin-openapi). Downloads the pinned spec at run time — it is proprietary and
+# never vendored; set HUBSPOT_OPENAPI_SPEC_FILE to use a local copy.
+test-contract:
+	HUBSPOT_OPENAPI_CONTRACT=1 go test ./internal/provider/ -run 'Contract' -v -count=1 -timeout 5m
 
 # Run acceptance tests.
 testacc:

@@ -67,6 +67,24 @@ jobs:
       - name: Check schema description coverage
         run: make check-descriptions
 
+  # Validate the hermetic fakes against HubSpot's published OpenAPI specs.
+  # The spec is downloaded at run time from a pinned commit (never vendored).
+  contract:
+    name: OpenAPI Contract Tests
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # TODO: pin actions by commit SHA for supply-chain hardening.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      - run: go mod download
+      - name: Validate fakes against HubSpot OpenAPI specs
+        run: make test-contract
+
   # Run acceptance tests against Terraform CLI versions.
   # Acceptance tests are hermetic (fake API) — no credentials required.
   test-terraform:
