@@ -284,15 +284,14 @@ func (f *fakeHubSpot) reportingRoute(w http.ResponseWriter, r *http.Request, res
 	}
 }
 
-// requestedProperties parses ?properties= (repeated and/or comma-separated).
+// requestedProperties parses ?properties= the way the spec defines it
+// (style: form, explode: true): one value per repeated parameter. A
+// comma-joined value is NOT split — the live API treats it as a single
+// unknown property and omits every optional section, so the fake must too.
 func requestedProperties(r *http.Request) map[string]bool {
 	out := map[string]bool{}
 	for _, v := range r.URL.Query()["properties"] {
-		for _, p := range strings.Split(v, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				out[p] = true
-			}
-		}
+		out[v] = true
 	}
 	return out
 }

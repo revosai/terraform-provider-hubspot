@@ -195,11 +195,11 @@ data "hubspot_dashboard" "by_name" {
 	for _, r := range f.reportingRequests() {
 		if r.Method == "GET" && r.Path == "/dashboards/"+id {
 			q, _ := url.ParseQuery(r.Query)
-			fetched = fetched || q.Get("properties") == "permissions,tags,widgets"
+			fetched = fetched || strings.Join(q["properties"], ",") == "permissions,tags,widgets"
 		}
 	}
 	if !fetched {
-		t.Errorf("expected GET /dashboards/%s?properties=permissions,tags,widgets", id)
+		t.Errorf("expected GET /dashboards/%s?properties=permissions&properties=tags&properties=widgets", id)
 	}
 }
 

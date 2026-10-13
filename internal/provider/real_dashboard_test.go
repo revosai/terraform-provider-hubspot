@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -38,13 +39,14 @@ func init() {
 
 // realAPIJSON performs a request with an optional JSON body against the real
 // API and decodes a 2xx JSON response into out (nil discards it). It returns
-// the HTTP status.
-func realAPIJSON(token, method, path string, body, out any) (int, error) {
+// the HTTP status and, for a non-2xx response, HubSpot's error body (e.g. a
+// 403's MISSING_SCOPES category and required scopes) so failures say why.
+func realAPIJSON(token, method, path string, body, out any) (int, string, error) {
 	var rd *bytes.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return 0, err
+			return 0, "", err
 		}
 		rd = bytes.NewReader(b)
 	} else {
@@ -52,7 +54,7 @@ func realAPIJSON(token, method, path string, body, out any) (int, error) {
 	}
 	req, err := http.NewRequest(method, realAPIBase+path, rd)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
@@ -60,37 +62,46 @@ func realAPIJSON(token, method, path string, body, out any) (int, error) {
 	}
 	resp, err := realHTTPClient.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if out != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return resp.StatusCode, strings.TrimSpace(string(b)), nil
+	}
+	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return resp.StatusCode, fmt.Errorf("decoding %s %s: %w", method, path, err)
+			return resp.StatusCode, "", fmt.Errorf("decoding %s %s: %w", method, path, err)
 		}
 	}
-	return resp.StatusCode, nil
+	return resp.StatusCode, "", nil
 }
 
-// realAPIFirstReportID returns the ID of any active report in the test
-// portal ("" if none): the API cannot create reports, so the widget steps
-// borrow an existing one (adding it to a test dashboard does not modify it).
+// realAPIFirstReportID returns the ID of an active, non-test report in the
+// test portal ("" if none): the API cannot create reports, so the widget
+// steps borrow an existing one (adding it to a test dashboard does not modify
+// it) and the report test clones one.
 func realAPIFirstReportID(token string) (string, error) {
 	var page struct {
 		Results []struct {
-			ID string `json:"id"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		} `json:"results"`
 	}
-	status, err := realAPIJSON(token, http.MethodGet, realReportingBase+"/reports?limit=1", nil, &page)
+	path := realReportingBase + "/reports?limit=100"
+	status, errBody, err := realAPIJSON(token, http.MethodGet, path, nil, &page)
 	if err != nil {
 		return "", err
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("GET reports returned status %d (is the portal opted into the Reporting API beta?)", status)
+		return "", fmt.Errorf("GET %s returned status %d: %s", path, status, errBody)
 	}
-	if len(page.Results) == 0 {
-		return "", nil
+	for _, r := range page.Results {
+		if !strings.HasPrefix(r.Name, realTestPrefix) {
+			return r.ID, nil
+		}
 	}
-	return page.Results[0].ID, nil
+	return "", nil
 }
 
 func realDashboardConfig(name, body string) string {
@@ -252,12 +263,12 @@ func sweepRealDashboards(_ string) error {
 			} `json:"paging"`
 		}
 		path := realReportingBase + "/dashboards?" + q.Encode()
-		status, err := realAPIJSON(token, http.MethodGet, path, nil, &page)
+		status, errBody, err := realAPIJSON(token, http.MethodGet, path, nil, &page)
 		if err != nil {
 			return fmt.Errorf("listing dashboards: %w", err)
 		}
 		if status != http.StatusOK {
-			return fmt.Errorf("GET %s returned status %d", path, status)
+			return fmt.Errorf("GET %s returned status %d: %s", path, status, errBody)
 		}
 		for _, d := range page.Results {
 			if strings.HasPrefix(d.Name, realTestPrefix) {
@@ -272,12 +283,12 @@ func sweepRealDashboards(_ string) error {
 	for _, d := range leaked {
 		log.Printf("[INFO] sweeper hubspot_dashboard: archiving leaked dashboard %q (id %s)", d.Name, d.ID)
 		p := realReportingBase + "/dashboards/" + url.PathEscape(d.ID)
-		status, err := realAPIJSON(token, http.MethodPatch, p, map[string]any{"archived": true}, nil)
+		status, errBody, err := realAPIJSON(token, http.MethodPatch, p, map[string]any{"archived": true}, nil)
 		if err != nil {
 			return fmt.Errorf("archiving dashboard %s: %w", d.ID, err)
 		}
 		if status >= 300 && status != http.StatusNotFound {
-			return fmt.Errorf("PATCH %s {archived:true} returned status %d", p, status)
+			return fmt.Errorf("PATCH %s {archived:true} returned status %d: %s", p, status, errBody)
 		}
 	}
 	return nil

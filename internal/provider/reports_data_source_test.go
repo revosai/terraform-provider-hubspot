@@ -108,7 +108,7 @@ data "hubspot_reports" "archived" {
 		}},
 	})
 
-	base := url.Values{"limit": {"100"}, "properties": {"permissions,tags"}}
+	base := url.Values{"limit": {"100"}, "properties": {"permissions", "tags"}}
 	with := func(k string, v ...string) url.Values {
 		out := url.Values{k: v}
 		for bk, bv := range base {

@@ -7,17 +7,19 @@ package provider_test
 // API public beta). Same env contract and safety guard as real_api_test.go,
 // plus:
 //
-//	HUBSPOT_TEST_SOURCE_REPORT_ID  ID of an existing report in the test
-//	                               portal to clone (the API cannot create
-//	                               reports from scratch). Unset => skip.
+//	HUBSPOT_TEST_SOURCE_REPORT_ID  optional: ID of the existing report to
+//	                               clone (the API cannot create reports from
+//	                               scratch). Unset => the first non-test
+//	                               report in the portal is used.
 //
 // The portal must have opted into the Reporting API beta and the token needs
-// the reporting.full.read + reporting.full.write scopes.
+// reporting.full.admin (or reporting.full.read + reporting.full.write).
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -64,8 +66,15 @@ func TestAccReal_reportLifecycle(t *testing.T) {
 	requireRealPortal(t)
 	source := os.Getenv("HUBSPOT_TEST_SOURCE_REPORT_ID")
 	if source == "" {
-		t.Skip("skipping real-portal report test: set HUBSPOT_TEST_SOURCE_REPORT_ID to the ID of an " +
-			"existing report in the test portal (reports can only be created by cloning)")
+		var err error
+		source, err = realAPIFirstReportID(os.Getenv("HUBSPOT_ACCESS_TOKEN"))
+		if err != nil {
+			t.Fatalf("looking up a source report to clone: %v", err)
+		}
+		if source == "" {
+			t.Fatal("the test portal has no report to clone (the API cannot create reports from scratch): " +
+				"create any report in the HubSpot UI, or set HUBSPOT_TEST_SOURCE_REPORT_ID")
+		}
 	}
 
 	name := randomRealName("report_")
@@ -193,11 +202,15 @@ func realAPIListReports(token, q string) ([][2]string, error) {
 				} `json:"next"`
 			} `json:"paging"`
 		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&body)
+		raw, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("GET %s returned status %d", path, resp.StatusCode)
+			return nil, fmt.Errorf("GET %s returned status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(raw)))
 		}
+		if readErr != nil {
+			return nil, fmt.Errorf("reading GET %s: %w", path, readErr)
+		}
+		decodeErr := json.Unmarshal(raw, &body)
 		if decodeErr != nil {
 			return nil, fmt.Errorf("decoding GET %s: %w", path, decodeErr)
 		}
@@ -227,7 +240,8 @@ func realAPIArchiveReport(token, id string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("PATCH %s {archived:true} returned status %d", path, resp.StatusCode)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("PATCH %s {archived:true} returned status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return nil
 }
