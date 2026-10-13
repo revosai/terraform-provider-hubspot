@@ -106,7 +106,7 @@ data "hubspot_dashboards" "archived" {
 		}},
 	})
 
-	base := url.Values{"limit": {"100"}, "properties": {"permissions,tags"}}
+	base := url.Values{"limit": {"100"}, "properties": {"permissions", "tags"}}
 	with := func(k string, v ...string) url.Values {
 		out := url.Values{k: v}
 		for bk, bv := range base {
@@ -182,8 +182,8 @@ data "hubspot_dashboard" "one" {
 			},
 		}},
 	})
-	requireSearch(t, f, "dashboards", url.Values{"properties": {"permissions,tags"}})
-	requireSearch(t, f, "dashboards", url.Values{"properties": {"permissions,tags,widgets"}})
+	requireSearch(t, f, "dashboards", url.Values{"properties": {"permissions", "tags"}})
+	requireSearch(t, f, "dashboards", url.Values{"properties": {"permissions", "tags", "widgets"}})
 }
 
 // TestAccDashboardsDataSource_empty returns empty (not null) lists.

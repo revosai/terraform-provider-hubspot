@@ -239,8 +239,8 @@ func TestReportingContract(t *testing.T) {
 	}
 
 	// The provider always asks for the optional sections this way.
-	dashProps := url.Values{"properties": {"permissions,tags,widgets"}}
-	reportProps := url.Values{"properties": {"permissions,tags"}}
+	dashProps := url.Values{"properties": {"permissions", "tags", "widgets"}}
+	reportProps := url.Values{"properties": {"permissions", "tags"}}
 	with := func(base url.Values, kv ...string) url.Values {
 		q := url.Values{}
 		for k, v := range base {

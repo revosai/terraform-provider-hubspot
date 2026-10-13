@@ -36,11 +36,6 @@ const (
 	dashboardsBasePath = reportingBasePath + "/dashboards"
 	reportsBasePath    = reportingBasePath + "/reports"
 
-	// dashboardProperties / reportProperties are the optional response
-	// sections requested on every read: HubSpot omits them unless asked.
-	dashboardProperties = "permissions,tags,widgets"
-	reportProperties    = "permissions,tags"
-
 	// reportingSearchPageSize is the API's maximum page size.
 	reportingSearchPageSize = 100
 
@@ -50,6 +45,16 @@ const (
 		"[API stability policy](https://github.com/revosai/terraform-provider-hubspot/blob/main/ROADMAP.md#api-stability-policy). " +
 		"The portal must opt into the beta (via the associated product update in HubSpot) and the token needs " +
 		"the `reporting.full.read` scope (plus `reporting.full.write` to create, clone or archive)."
+)
+
+// dashboardProperties / reportProperties are the optional response sections
+// requested on every read: HubSpot omits them unless asked. The spec defines
+// the properties query parameter as style: form, explode: true, so each value
+// must be sent as its own repeated parameter (properties=a&properties=b); a
+// comma-joined value is read as one unknown property and returns nothing.
+var (
+	dashboardProperties = []string{"permissions", "tags", "widgets"}
+	reportProperties    = []string{"permissions", "tags"}
 )
 
 // Permission-type enums shared by dashboards and reports.
@@ -693,7 +698,7 @@ func reportPath(id string) string    { return reportsBasePath + "/" + url.PathEs
 // archived=true fetches an archived dashboard instead of an active one. The
 // raw response is returned for raw_json snapshots.
 func getDashboard(ctx context.Context, c *client.Client, id string, archived bool) (*apiDashboard, json.RawMessage, error) {
-	q := url.Values{"properties": {dashboardProperties}}
+	q := url.Values{"properties": dashboardProperties}
 	if archived {
 		q.Set("archived", "true")
 	}
@@ -710,7 +715,7 @@ func getDashboard(ctx context.Context, c *client.Client, id string, archived boo
 
 // getReport fetches one report with permissions and tags.
 func getReport(ctx context.Context, c *client.Client, id string, archived bool) (*apiReport, json.RawMessage, error) {
-	q := url.Values{"properties": {reportProperties}}
+	q := url.Values{"properties": reportProperties}
 	if archived {
 		q.Set("archived", "true")
 	}

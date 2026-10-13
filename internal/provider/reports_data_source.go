@@ -95,7 +95,7 @@ func (d *reportsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 	query := f.api
-	query.Set("properties", reportProperties)
+	query["properties"] = reportProperties
 
 	results, err := searchReportingSorted(ctx, d.client, reportsBasePath, query)
 	if err != nil {

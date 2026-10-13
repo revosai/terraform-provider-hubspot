@@ -43,7 +43,7 @@ type dashboardsDataSourceModel struct {
 }
 
 // dashboardPropertiesWithoutWidgets is requested when include_widgets is false.
-const dashboardPropertiesWithoutWidgets = "permissions,tags"
+var dashboardPropertiesWithoutWidgets = []string{"permissions", "tags"}
 
 const dashboardsWidgetsNote = " Null unless the data source sets `include_widgets = true`."
 
@@ -95,9 +95,9 @@ func (d *dashboardsDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	withWidgets := config.IncludeWidgets.ValueBool()
 	query := f.api
 	if withWidgets {
-		query.Set("properties", dashboardProperties)
+		query["properties"] = dashboardProperties
 	} else {
-		query.Set("properties", dashboardPropertiesWithoutWidgets)
+		query["properties"] = dashboardPropertiesWithoutWidgets
 	}
 
 	results, err := searchReportingSorted(ctx, d.client, dashboardsBasePath, query)

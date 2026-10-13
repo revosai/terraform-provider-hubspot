@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (Unreleased)
+
+BUG FIXES:
+
+* `hubspot_dashboard`, `hubspot_report`, `hubspot_dashboard(s)` / `hubspot_report(s)` data sources: request the optional response sections (`permissions`, `tags`, `widgets`) as repeated `properties` query parameters, as the Reporting API requires. The comma-joined form sent by 0.3.0 made HubSpot omit all of them, so `report_ids` widget membership could never be verified (apply failed with "shows reports [] but the configuration wants …") and `permissions`, `tags` and `widgets` read back empty
+
 ## 0.3.0 (October 12, 2026)
 
 FEATURES:
