@@ -51,12 +51,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
-// realAPIBase is the live HubSpot API root. It is a variable only so the
-// hermetic probe tests (real_reporting_probe_test.go) can point the real-layer
-// helpers at an httptest server; nothing else reassigns it.
-var realAPIBase = "https://api.hubapi.com"
-
 const (
+	realAPIBase = "https://api.hubapi.com"
+
 	// realTestPrefix marks every resource created by this layer so the
 	// sweepers can identify (and only ever touch) test leftovers.
 	realTestPrefix = "tf_acc_test_"

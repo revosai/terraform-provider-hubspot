@@ -3,10 +3,6 @@
 # Required repository setup:
 #   - Repository secret   HUBSPOT_ACCESS_TOKEN   — private app access token for the test portal
 #   - Repository variable HUBSPOT_TEST_PORTAL_ID — portal (hub) ID of the dedicated test portal
-# Optional (reporting tests; see dev-docs/testing-real-portal.md):
-#   - Repository variable HUBSPOT_TEST_SOURCE_REPORT_ID — existing report to clone in the report test
-#   - Repository variable HUBSPOT_TEST_REQUIRE_REPORTING — "1" fails (instead of skips) the reporting
-#     tests when the portal cannot use the Reporting API beta
 #
 # Deliberately NOT triggered on pull_request: secrets must never be exposed to fork PRs.
 name: Real API Tests
@@ -67,8 +63,6 @@ jobs:
           TF_ACC: "1"
           HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
           HUBSPOT_TEST_PORTAL_ID: ${{ vars.HUBSPOT_TEST_PORTAL_ID }}
-          HUBSPOT_TEST_SOURCE_REPORT_ID: ${{ vars.HUBSPOT_TEST_SOURCE_REPORT_ID }}
-          HUBSPOT_TEST_REQUIRE_REPORTING: ${{ vars.HUBSPOT_TEST_REQUIRE_REPORTING }}
         run: |
           if [ -z "$HUBSPOT_ACCESS_TOKEN" ]; then
             echo "::notice::HUBSPOT_ACCESS_TOKEN secret not configured, skipping real API tests"
