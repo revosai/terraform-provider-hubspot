@@ -43,6 +43,24 @@ app.hubspot.com URL).
   tab), or:
   `gh variable set HUBSPOT_TEST_PORTAL_ID --repo revosai/terraform-provider-hubspot --body "<hub id>"`
 
+### 4. Optional: reporting tests (Analytics Reporting API beta)
+
+`TestAccReal_dashboardLifecycle`, `TestAccReal_reportLifecycle` and the
+`hubspot_dashboard` / `hubspot_report` sweepers need the test portal to have
+**opted into the Analytics Reporting API beta** (the associated product
+update in HubSpot) and the credential to carry the `reporting.full.read` and
+`reporting.full.write` scopes. Without them HubSpot answers 403: the tests
+**skip** with that reason and the sweepers no-op, so the nightly run stays
+green.
+
+- Repository **variable** `HUBSPOT_TEST_SOURCE_REPORT_ID` = the ID of any
+  existing report in the test portal. The API cannot create reports, so the
+  report test clones this one (it is never modified). Unset ⇒ the report
+  test skips.
+- Repository **variable** `HUBSPOT_TEST_REQUIRE_REPORTING` = `1` once the
+  portal is set up: a 403 then **fails** the reporting tests instead of
+  skipping, so a revoked scope or beta opt-out cannot hide behind a skip.
+
 The workflow triggers only on `schedule` and `workflow_dispatch` — secrets
 never reach fork PRs. First run: Actions → **Real API Tests** → Run workflow.
 

@@ -71,6 +71,50 @@ func realAPIJSON(token, method, path string, body, out any) (int, error) {
 	return resp.StatusCode, nil
 }
 
+// realReportingAvailable probes the Analytics Reporting API (public beta) for
+// the test portal. It reports false with a reason when HubSpot answers 403 —
+// the portal has not opted into the beta, or the token lacks the
+// reporting.full.* scopes — so the real tests can skip and the sweepers can
+// no-op instead of failing the nightly run on a missing portal setting. Any
+// other non-200 status is an error.
+func realReportingAvailable(token string) (bool, string, error) {
+	path := realReportingBase + "/dashboards?limit=1"
+	status, err := realAPIJSON(token, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return false, "", err
+	}
+	switch status {
+	case http.StatusOK:
+		return true, "", nil
+	case http.StatusForbidden:
+		return false, fmt.Sprintf("GET %s returned 403: the test portal has not opted into the Analytics "+
+			"Reporting API beta, or HUBSPOT_ACCESS_TOKEN lacks the reporting.full.read / "+
+			"reporting.full.write scopes", path), nil
+	default:
+		return false, "", fmt.Errorf("probing the Reporting API: GET %s returned status %d", path, status)
+	}
+}
+
+// requireRealReporting skips the calling test when the test portal cannot
+// use the Reporting API (see realReportingAvailable), unless
+// HUBSPOT_TEST_REQUIRE_REPORTING=1 is set: once the portal is set up, that
+// turns the skip into a failure so a revoked scope or beta opt-out cannot
+// hide behind a skip.
+func requireRealReporting(t *testing.T, token string) {
+	t.Helper()
+	ok, reason, err := realReportingAvailable(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		return
+	}
+	if os.Getenv("HUBSPOT_TEST_REQUIRE_REPORTING") == "1" {
+		t.Fatalf("HUBSPOT_TEST_REQUIRE_REPORTING=1 but the Reporting API is unavailable: %s", reason)
+	}
+	t.Skipf("skipping real-portal reporting test: %s (set HUBSPOT_TEST_REQUIRE_REPORTING=1 to fail instead)", reason)
+}
+
 // realAPIFirstReportID returns the ID of any active report in the test
 // portal ("" if none): the API cannot create reports, so the widget steps
 // borrow an existing one (adding it to a test dashboard does not modify it).
@@ -110,6 +154,7 @@ resource "hubspot_dashboard" "test" {
 func TestAccReal_dashboardLifecycle(t *testing.T) {
 	requireRealPortal(t)
 	token := os.Getenv("HUBSPOT_ACCESS_TOKEN")
+	requireRealReporting(t, token)
 
 	reportID, err := realAPIFirstReportID(token)
 	if err != nil {
@@ -230,6 +275,12 @@ func checkRealDashboardsArchived(s *terraform.State) error {
 func sweepRealDashboards(_ string) error {
 	token, ok, err := sweeperEnv("hubspot_dashboard")
 	if err != nil || !ok {
+		return err
+	}
+	if ok, reason, err := realReportingAvailable(token); err != nil || !ok {
+		if err == nil {
+			log.Printf("[INFO] sweeper hubspot_dashboard: %s; nothing to sweep", reason)
+		}
 		return err
 	}
 	type dash struct {

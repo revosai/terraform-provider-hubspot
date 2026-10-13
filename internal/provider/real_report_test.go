@@ -62,6 +62,7 @@ resource "hubspot_report" "test" {
 // (not deleted) and the source left untouched.
 func TestAccReal_reportLifecycle(t *testing.T) {
 	requireRealPortal(t)
+	requireRealReporting(t, os.Getenv("HUBSPOT_ACCESS_TOKEN"))
 	source := os.Getenv("HUBSPOT_TEST_SOURCE_REPORT_ID")
 	if source == "" {
 		t.Skip("skipping real-portal report test: set HUBSPOT_TEST_SOURCE_REPORT_ID to the ID of an " +
@@ -235,6 +236,12 @@ func realAPIArchiveReport(token, id string) error {
 func sweepRealReports(_ string) error {
 	token, ok, err := sweeperEnv("hubspot_report")
 	if err != nil || !ok {
+		return err
+	}
+	if ok, reason, err := realReportingAvailable(token); err != nil || !ok {
+		if err == nil {
+			log.Printf("[INFO] sweeper hubspot_report: %s; nothing to sweep", reason)
+		}
 		return err
 	}
 	reports, err := realAPIListReports(token, realTestPrefix)
