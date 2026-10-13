@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 (Unreleased)
+## 0.3.1 (October 13, 2026)
 
 BUG FIXES:
 
