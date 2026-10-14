@@ -30,7 +30,7 @@ terraform {
   required_providers {
     hubspot = {
       source  = "revosai/hubspot"
-      version = "~> 0.1"
+      version = "~> 0.3.1"
     }
   }
 }

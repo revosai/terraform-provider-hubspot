@@ -9,8 +9,10 @@ The provider follows [Semantic Versioning](https://semver.org/):
 
 - **Pre-1.0 (`0.x`):** the API is still stabilizing. Breaking changes may land
   in a **minor** release (`0.x → 0.(x+1)`); patch releases are backward
-  compatible. Pin with `version = "~> 0.1"` and read the changelog before
-  upgrading the minor.
+  compatible. Pin to the minor with a three-part constraint, e.g.
+  `version = "~> 0.3.1"` (≥ 0.3.1, < 0.4.0): it accepts patch releases but
+  not the next minor (a two-part `~> 0.3` would allow any 0.x). Read the
+  changelog before raising the minor.
 - **Post-1.0:** breaking changes only in a **major** release, accompanied by an
   upgrade guide under `docs/guides/`.
 
