@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type fakeGroup struct {
@@ -241,6 +242,11 @@ type fakeHubSpot struct {
 	lastPipelinePut string // raw query string of the most recent pipeline PUT
 	lastFlowPut     []byte // raw body of the most recent flow PUT
 
+	// hsCLIKey, when set, is the only personal access key the HubSpot CLI
+	// key exchange accepts, and API calls then need a token it issued.
+	hsCLIKey    string
+	hsCLITokens map[string]bool
+
 	// schemaReadLag emulates HubSpot's stale schema-read cache: after every
 	// schema write, GETs alternate between a pre-write snapshot and the
 	// current schema until schemaReadLag stale reads have been served
@@ -333,8 +339,16 @@ func (f *fakeHubSpot) lastPipelinePutQuery() string {
 }
 
 func (f *fakeHubSpot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/localdevauth/v1/auth/refresh" {
+		f.handleHSCLIExchange(w, r)
+		return
+	}
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 		writeHubSpotError(w, http.StatusUnauthorized, "AUTHENTICATION_FAILED", "missing bearer token")
+		return
+	}
+	if f.requiresHSCLIToken() && !f.issuedHSCLIToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) {
+		writeHubSpotError(w, http.StatusUnauthorized, "AUTHENTICATION_FAILED", "token was not issued by the key exchange")
 		return
 	}
 
@@ -1597,5 +1611,51 @@ func writeHubSpotError(w http.ResponseWriter, status int, category, message stri
 		"message":       message,
 		"category":      category,
 		"correlationId": "fake-correlation-id",
+	})
+}
+
+// acceptHSCLIKey makes the fake's HubSpot CLI key exchange accept key, and
+// makes every other API call require a token the exchange issued.
+func (f *fakeHubSpot) acceptHSCLIKey(key string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hsCLIKey = key
+	f.hsCLITokens = map[string]bool{}
+}
+
+func (f *fakeHubSpot) requiresHSCLIToken() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hsCLIKey != ""
+}
+
+func (f *fakeHubSpot) issuedHSCLIToken(token string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hsCLITokens[token]
+}
+
+// handleHSCLIExchange emulates POST /localdevauth/v1/auth/refresh, where the
+// HubSpot CLI exchanges a personal access key for a 30-minute access token.
+func (f *fakeHubSpot) handleHSCLIExchange(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var body struct {
+		Key string `json:"encodedOAuthRefreshToken"`
+	}
+	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&body) != nil {
+		writeHubSpotError(w, http.StatusBadRequest, "VALIDATION_ERROR", "bad key exchange request")
+		return
+	}
+	if f.hsCLIKey == "" || body.Key != f.hsCLIKey || r.URL.Query().Get("portalId") != strconv.FormatInt(f.portalID, 10) {
+		writeHubSpotError(w, http.StatusUnauthorized, "INVALID_AUTHENTICATION", "personal access key not accepted")
+		return
+	}
+	token := fmt.Sprintf("hs-cli-token-%d", len(f.hsCLITokens)+1)
+	f.hsCLITokens[token] = true
+	writeJSON(w, http.StatusOK, map[string]any{
+		"oauthAccessToken": token,
+		"expiresAtMillis":  time.Now().Add(30 * time.Minute).UnixMilli(),
+		"hubId":            f.portalID,
 	})
 }

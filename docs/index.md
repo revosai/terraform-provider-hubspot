@@ -56,16 +56,34 @@ A token set explicitly in the provider configuration takes precedence over
 the environment variable. Prefer the environment variable to keep credentials
 out of your configuration files and state.
 
+Developers can instead authenticate as themselves with their
+[HubSpot CLI](https://developers.hubspot.com/docs/developer-tooling/local-development/hubspot-cli/install-the-cli)
+login: run `hs account auth`, then set `use_hs_cli`:
+
+```terraform
+# Authenticate as the developer logged in with the HubSpot CLI
+# (`hs account auth`), instead of with a shared service key.
+provider "hubspot" {
+  use_hs_cli = true
+
+  # The CLI account to use, by name or account ID. Defaults to the CLI's
+  # default account.
+  hs_cli_account = "my-sandbox"
+}
+```
+
 Every provider argument can be supplied through the environment:
 
 | Provider argument | Environment variable | Default |
 |---|---|---|
 | `access_token` | `HUBSPOT_ACCESS_TOKEN` | (required, no default) |
 | `base_url` | `HUBSPOT_BASE_URL` | `https://api.hubapi.com` |
+| `use_hs_cli` | `HUBSPOT_USE_HS_CLI` | `false` |
+| `hs_cli_account` | `HUBSPOT_HS_CLI_ACCOUNT` | the CLI's default account |
 
 See the [Authentication and scopes](guides/authentication.md) guide for the
-service-key vs. private-app details, the per-resource scope matrix, and the
-product-tier requirements.
+service-key vs. private-app details, the HubSpot CLI login, the per-resource
+scope matrix, and the product-tier requirements.
 
 ### Terraform state and least privilege
 
@@ -83,3 +101,5 @@ encryption.
 
 - `access_token` (String, Sensitive) HubSpot API credential (`pat-...`): a service key (Development → Keys → Service keys; recommended) or a legacy private app access token. May also be set via the `HUBSPOT_ACCESS_TOKEN` environment variable.
 - `base_url` (String) HubSpot API base URL. Defaults to `https://api.hubapi.com`. May also be set via the `HUBSPOT_BASE_URL` environment variable. Override only for testing.
+- `hs_cli_account` (String) The HubSpot CLI account to use with `use_hs_cli`, by name or account ID. Defaults to the CLI's default account (`hs account use`). May also be set via the `HUBSPOT_HS_CLI_ACCOUNT` environment variable.
+- `use_hs_cli` (Boolean) Authenticate as the user logged in with the HubSpot CLI (`hs account auth`): the provider exchanges the personal access key in `~/.hscli/config.yml` for short-lived access tokens, as the CLI does. Conflicts with `access_token`, and takes precedence over the `HUBSPOT_ACCESS_TOKEN` environment variable. May also be set via the `HUBSPOT_USE_HS_CLI` environment variable.

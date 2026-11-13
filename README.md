@@ -132,6 +132,10 @@ token works identically:
 export HUBSPOT_ACCESS_TOKEN="pat-..."
 ```
 
+To authenticate as yourself instead, log in with the HubSpot CLI
+(`hs account auth`) and set `use_hs_cli = true` in the provider block; see the
+[authentication guide](docs/guides/authentication.md#hubspot-cli-login).
+
 Grant only the configuration scopes you need — HubSpot evaluates them **per
 object type**:
 

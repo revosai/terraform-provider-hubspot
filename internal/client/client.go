@@ -52,8 +52,11 @@ type Config struct {
 	// Required.
 	BaseURL string
 	// AccessToken is the HubSpot private-app access token sent as a Bearer
-	// token. Required.
+	// token. Set exactly one of AccessToken and TokenSource.
 	AccessToken string
+	// TokenSource supplies the Bearer token for each request, for credentials
+	// that expire during a run. Set exactly one of AccessToken and TokenSource.
+	TokenSource TokenSource
 	// UserAgent is sent as the User-Agent header on every request.
 	UserAgent string
 	// MaxRetries caps the number of retry attempts after the initial request.
@@ -73,11 +76,21 @@ type Config struct {
 	RetryWaitMax time.Duration
 }
 
+// TokenSource supplies a Bearer token. Token is called before every request
+// attempt, so it should cache the token until shortly before it expires.
+type TokenSource interface {
+	Token(ctx context.Context) (string, error)
+}
+
+type staticToken string
+
+func (t staticToken) Token(context.Context) (string, error) { return string(t), nil }
+
 // Client is a HubSpot API client. Create one with New. It is safe for
 // concurrent use by multiple goroutines.
 type Client struct {
 	baseURL      string
-	accessToken  string
+	tokenSource  TokenSource
 	userAgent    string
 	maxRetries   int
 	retryWaitMin time.Duration
@@ -91,8 +104,14 @@ func New(cfg Config) (*Client, error) {
 	if cfg.BaseURL == "" {
 		return nil, errors.New("hubspot client: Config.BaseURL is required")
 	}
-	if cfg.AccessToken == "" {
-		return nil, errors.New("hubspot client: Config.AccessToken is required")
+	tokenSource := cfg.TokenSource
+	switch {
+	case cfg.AccessToken != "" && tokenSource != nil:
+		return nil, errors.New("hubspot client: set only one of Config.AccessToken and Config.TokenSource")
+	case cfg.AccessToken != "":
+		tokenSource = staticToken(cfg.AccessToken)
+	case tokenSource == nil:
+		return nil, errors.New("hubspot client: Config.AccessToken or Config.TokenSource is required")
 	}
 	if _, err := url.Parse(cfg.BaseURL); err != nil {
 		return nil, fmt.Errorf("hubspot client: invalid BaseURL %q: %w", cfg.BaseURL, err)
@@ -121,7 +140,7 @@ func New(cfg Config) (*Client, error) {
 
 	return &Client{
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
-		accessToken:  cfg.AccessToken,
+		tokenSource:  tokenSource,
 		userAgent:    cfg.UserAgent,
 		maxRetries:   maxRetries,
 		retryWaitMin: waitMin,
@@ -200,7 +219,11 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if err != nil {
 			return fmt.Errorf("hubspot client: building %s %s request: %w", method, path, err)
 		}
-		req.Header.Set("Authorization", "Bearer "+c.accessToken)
+		token, err := c.tokenSource.Token(ctx)
+		if err != nil {
+			return fmt.Errorf("hubspot client: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 		if c.userAgent != "" {
 			req.Header.Set("User-Agent", c.userAgent)
 		}
