@@ -42,16 +42,24 @@ A token set explicitly in the provider configuration takes precedence over
 the environment variable. Prefer the environment variable to keep credentials
 out of your configuration files and state.
 
+Developers can instead authenticate as themselves with their
+[HubSpot CLI](https://developers.hubspot.com/docs/developer-tooling/local-development/hubspot-cli/install-the-cli)
+login: run `hs account auth`, then set `use_hs_cli`:
+
+{{tffile "examples/provider/provider-hs-cli.tf"}}
+
 Every provider argument can be supplied through the environment:
 
 | Provider argument | Environment variable | Default |
 |---|---|---|
 | `access_token` | `HUBSPOT_ACCESS_TOKEN` | (required, no default) |
 | `base_url` | `HUBSPOT_BASE_URL` | `https://api.hubapi.com` |
+| `use_hs_cli` | `HUBSPOT_USE_HS_CLI` | `false` |
+| `hs_cli_account` | `HUBSPOT_HS_CLI_ACCOUNT` | the CLI's default account |
 
 See the [Authentication and scopes](guides/authentication.md) guide for the
-service-key vs. private-app details, the per-resource scope matrix, and the
-product-tier requirements.
+service-key vs. private-app details, the HubSpot CLI login, the per-resource
+scope matrix, and the product-tier requirements.
 
 ### Terraform state and least privilege
 

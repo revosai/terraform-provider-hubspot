@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -45,6 +46,78 @@ func TestClient_SendsAuthAndUserAgent(t *testing.T) {
 	}
 	if gotUA != "terraform-provider-hubspot/test" {
 		t.Errorf("User-Agent = %q", gotUA)
+	}
+}
+
+// tokenSourceFunc adapts a function to client.TokenSource.
+type tokenSourceFunc func(context.Context) (string, error)
+
+func (f tokenSourceFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
+
+func TestClient_TokenSourceAsksForEachRequest(t *testing.T) {
+	t.Parallel()
+	var gotAuth []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	var calls int
+	c, err := client.New(client.Config{
+		BaseURL: srv.URL,
+		TokenSource: tokenSourceFunc(func(context.Context) (string, error) {
+			calls++
+			return fmt.Sprintf("token-%d", calls), nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	for range 2 {
+		if err := c.Get(context.Background(), "/ping", nil, nil); err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+	}
+	if len(gotAuth) != 2 || gotAuth[0] != "Bearer token-1" || gotAuth[1] != "Bearer token-2" {
+		t.Errorf("Authorization headers = %q", gotAuth)
+	}
+}
+
+func TestClient_TokenSourceErrorStopsRequest(t *testing.T) {
+	t.Parallel()
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := client.New(client.Config{
+		BaseURL: srv.URL,
+		TokenSource: tokenSourceFunc(func(context.Context) (string, error) {
+			return "", fmt.Errorf("login expired")
+		}),
+	})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	err = c.Get(context.Background(), "/ping", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "login expired") {
+		t.Fatalf("err = %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Errorf("sent %d requests without a token", requests.Load())
+	}
+}
+
+func TestClient_RequiresOneCredential(t *testing.T) {
+	t.Parallel()
+	ts := tokenSourceFunc(func(context.Context) (string, error) { return "t", nil })
+	if _, err := client.New(client.Config{BaseURL: "https://example.test"}); err == nil {
+		t.Error("New with no credential succeeded")
+	}
+	if _, err := client.New(client.Config{BaseURL: "https://example.test", AccessToken: "t", TokenSource: ts}); err == nil {
+		t.Error("New with both AccessToken and TokenSource succeeded")
 	}
 }
 

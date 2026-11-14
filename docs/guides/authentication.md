@@ -38,6 +38,39 @@ OAuth is intentionally **not** supported: OAuth access tokens expire every ~30
 minutes and require an interactive install flow, which does not fit
 non-interactive Terraform runs.
 
+## HubSpot CLI login
+
+A developer running Terraform from their own machine can authenticate as
+themselves instead of with a shared service key. Log in with the
+[HubSpot CLI](https://developers.hubspot.com/docs/developer-tooling/local-development/hubspot-cli/install-the-cli),
+then set `use_hs_cli`:
+
+```shell
+hs account auth
+```
+
+```terraform
+provider "hubspot" {
+  use_hs_cli     = true
+  hs_cli_account = "my-sandbox" # name or account ID; defaults to the CLI's default account
+}
+```
+
+`hs account auth` stores a **personal access key** in `~/.hscli/config.yml`.
+The provider exchanges it for short-lived access tokens the same way the CLI
+does, renews them during long runs, and never writes to the CLI's config.
+
+The token carries the scopes chosen when the personal access key was
+generated (on the page `hs account auth` opens), capped by the user's
+permissions. Add the scopes from the table below that your
+configuration needs. HubSpot does not accept user-level tokens on every
+endpoint: the pipelines API refuses them, so use a service key to manage
+`hubspot_pipeline`.
+
+`use_hs_cli` conflicts with `access_token`, and takes precedence over the
+`HUBSPOT_ACCESS_TOKEN` environment variable. `HUBSPOT_USE_HS_CLI=true` and
+`HUBSPOT_HS_CLI_ACCOUNT` set the same options from the environment.
+
 ## Least privilege
 
 The provider **never requests or uses CRM record scopes** (`crm.objects.*`,

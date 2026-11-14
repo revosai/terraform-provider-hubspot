@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"os"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/revosai/terraform-provider-hubspot/internal/client"
+	"github.com/revosai/terraform-provider-hubspot/internal/hscli"
 )
 
 const defaultBaseURL = "https://api.hubapi.com"
@@ -40,8 +42,10 @@ func New(version string) func() provider.Provider {
 
 // HubSpotProviderModel maps the provider configuration block.
 type HubSpotProviderModel struct {
-	AccessToken types.String `tfsdk:"access_token"`
-	BaseURL     types.String `tfsdk:"base_url"`
+	AccessToken  types.String `tfsdk:"access_token"`
+	BaseURL      types.String `tfsdk:"base_url"`
+	UseHSCLI     types.Bool   `tfsdk:"use_hs_cli"`
+	HSCLIAccount types.String `tfsdk:"hs_cli_account"`
 }
 
 func (p *HubSpotProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -68,6 +72,20 @@ func (p *HubSpotProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				MarkdownDescription: "HubSpot API base URL. Defaults to `https://api.hubapi.com`. May also be " +
 					"set via the `HUBSPOT_BASE_URL` environment variable. Override only for testing.",
 			},
+			"use_hs_cli": schema.BoolAttribute{
+				Optional: true,
+				MarkdownDescription: "Authenticate as the user logged in with the HubSpot CLI (`hs account auth`): the " +
+					"provider exchanges the personal access key in `~/.hscli/config.yml` for short-lived access " +
+					"tokens, as the CLI does. Conflicts with `access_token`, and takes precedence over the " +
+					"`HUBSPOT_ACCESS_TOKEN` environment variable. May also be set via the `HUBSPOT_USE_HS_CLI` " +
+					"environment variable.",
+			},
+			"hs_cli_account": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "The HubSpot CLI account to use with `use_hs_cli`, by name or account ID. " +
+					"Defaults to the CLI's default account (`hs account use`). May also be set via the " +
+					"`HUBSPOT_HS_CLI_ACCOUNT` environment variable.",
+			},
 		},
 	}
 }
@@ -90,16 +108,11 @@ func (p *HubSpotProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	accessToken := os.Getenv("HUBSPOT_ACCESS_TOKEN")
-	if !config.AccessToken.IsNull() {
-		accessToken = config.AccessToken.ValueString()
-	}
-	if accessToken == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("access_token"),
-			"Missing HubSpot access token",
-			"Set the access_token provider attribute or the HUBSPOT_ACCESS_TOKEN environment variable to a "+
-				"HubSpot private app access token.",
+	if config.UseHSCLI.IsUnknown() || config.HSCLIAccount.IsUnknown() {
+		resp.Diagnostics.AddError(
+			"Unknown HubSpot CLI settings",
+			"use_hs_cli and hs_cli_account must be known when the provider is configured. Set static values or "+
+				"use the HUBSPOT_USE_HS_CLI and HUBSPOT_HS_CLI_ACCOUNT environment variables.",
 		)
 		return
 	}
@@ -112,13 +125,83 @@ func (p *HubSpotProvider) Configure(ctx context.Context, req provider.ConfigureR
 		baseURL = defaultBaseURL
 	}
 
+	useHSCLI := false
+	if v := os.Getenv("HUBSPOT_USE_HS_CLI"); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("use_hs_cli"), "Invalid HUBSPOT_USE_HS_CLI",
+				"HUBSPOT_USE_HS_CLI must be true or false, not "+strconv.Quote(v)+".")
+			return
+		}
+		useHSCLI = parsed
+	}
+	if !config.UseHSCLI.IsNull() {
+		useHSCLI = config.UseHSCLI.ValueBool()
+	}
+	hsCLIAccount := os.Getenv("HUBSPOT_HS_CLI_ACCOUNT")
+	if !config.HSCLIAccount.IsNull() {
+		hsCLIAccount = config.HSCLIAccount.ValueString()
+	}
+
+	clientConfig := client.Config{
+		BaseURL:   baseURL,
+		UserAgent: "terraform-provider-hubspot/" + p.version,
+	}
+	if useHSCLI {
+		if !config.AccessToken.IsNull() {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("use_hs_cli"),
+				"Conflicting HubSpot credentials",
+				"Set either access_token or use_hs_cli, not both.",
+			)
+			return
+		}
+		configPath, err := hscli.DefaultConfigPath()
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("use_hs_cli"), "Unable to find the HubSpot CLI login", err.Error())
+			return
+		}
+		account, err := hscli.LoadAccount(configPath, hsCLIAccount)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("hs_cli_account"), "Unable to use the HubSpot CLI login", err.Error())
+			return
+		}
+		tokenSource := hscli.NewTokenSource(baseURL, account, nil)
+		// Exchange the key now, so an expired or revoked login fails here
+		// rather than in the first resource to make a request.
+		if _, err := tokenSource.Token(ctx); err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("use_hs_cli"), "Unable to use the HubSpot CLI login", err.Error())
+			return
+		}
+		clientConfig.TokenSource = tokenSource
+	} else {
+		if hsCLIAccount != "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("hs_cli_account"),
+				"HubSpot CLI account without use_hs_cli",
+				"hs_cli_account is set but use_hs_cli is not; set use_hs_cli = true to authenticate with the HubSpot CLI login.",
+			)
+			return
+		}
+		accessToken := os.Getenv("HUBSPOT_ACCESS_TOKEN")
+		if !config.AccessToken.IsNull() {
+			accessToken = config.AccessToken.ValueString()
+		}
+		if accessToken == "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("access_token"),
+				"Missing HubSpot access token",
+				"Set the access_token provider attribute or the HUBSPOT_ACCESS_TOKEN environment variable to a "+
+					"HubSpot private app access token, or set use_hs_cli to authenticate with the HubSpot CLI login.",
+			)
+			return
+		}
+		clientConfig.AccessToken = accessToken
+	}
+
 	client.DebugLogger = tflog.Debug
 
-	c, err := client.New(client.Config{
-		BaseURL:     baseURL,
-		AccessToken: accessToken,
-		UserAgent:   "terraform-provider-hubspot/" + p.version,
-	})
+	c, err := client.New(clientConfig)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to create HubSpot API client", err.Error())
 		return

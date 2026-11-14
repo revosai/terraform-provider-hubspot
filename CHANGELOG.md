@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 (Unreleased)
+
+FEATURES:
+
+* provider: `use_hs_cli` authenticates as the developer logged in with the HubSpot CLI (`hs account auth`), exchanging the CLI's personal access key for short-lived access tokens; `hs_cli_account` picks the CLI account (`HUBSPOT_USE_HS_CLI`, `HUBSPOT_HS_CLI_ACCOUNT`)
+
 ## 0.3.1 (October 13, 2026)
 
 BUG FIXES:
